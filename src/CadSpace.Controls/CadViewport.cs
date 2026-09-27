@@ -20,6 +20,7 @@ namespace CadSpace.Controls;
 public sealed class CadViewport : Grid
 {
     private readonly DraftSurface _draft;
+    private readonly CadDynamicInput _dynamic=new();
     private ModelSurface? _model;
     private readonly TextBlock _viewLabel = CadTheme.Text("[Top]  [2D Wireframe]", 11, 0xFFBDCDD9);
     private readonly TextBlock _metrics = CadTheme.Text("", 10, CadTheme.Muted);
@@ -31,6 +32,7 @@ public sealed class CadViewport : Grid
     private bool _selecting, _dragged;
     private SnapResult _snap;
     private double _lastCpuDrawMilliseconds;
+    private long _lastMetricUpdate;
     public Camera2D Camera { get; } = new();
     public Camera3D ModelCamera { get; } = new();
     public bool Is3D { get; private set; }
@@ -55,7 +57,7 @@ public sealed class CadViewport : Grid
         _styleSelector.SelectionChanged += (_, _) => { if (_styleSelector.SelectedItem is string style && Enum.TryParse<ModelVisualStyle>(style, out var value)) { VisualStyle = value; Set3D(true); UpdateViewLabel(); Redraw(); } };
         navigation.Children.Add(CadTheme.Button("Perspective / Ortho", () => { ModelCamera.Orthographic = !ModelCamera.Orthographic; Set3D(true); UpdateViewLabel(); Redraw(); }, 126));
         navigation.Children.Add(CadTheme.Button("Clip half / Off", () => { ClippingPlane = ClippingPlane == null ? Plane3.Through(_session?.Scene.Bounds.Center ?? default, Vec3.UnitZ) : null; Set3D(true); UpdateViewLabel(); Redraw(); }, 126));
-        Children.Add(navigation);
+        Children.Add(navigation); Children.Add(_dynamic);
         PointerPressed += Pressed; PointerMoved += Moved; PointerReleased += Released; PointerWheelChanged += Wheel;
         PointerEntered += (_, _) => { _inside = true; Redraw(); };
         PointerExited += (_, _) => { _inside = false; Redraw(); };
@@ -68,7 +70,7 @@ public sealed class CadViewport : Grid
         if (_session != null) _session.Changed -= Redraw;
         if (_commands != null) { _commands.Changed -= Redraw; _commands.ViewRequested -= OnView; }
         _session = session; _commands = commands; session.Changed += Redraw; commands.Changed += Redraw; commands.ViewRequested += OnView;
-        _fit = true; ClippingPlane = null; Set3D(false); Redraw();
+        _dynamic.Bind(commands); _fit = true; ClippingPlane = null; Set3D(false); Redraw();
     }
     public void Fit()
     {
@@ -108,12 +110,19 @@ public sealed class CadViewport : Grid
         else Set3D(view == "3DORBIT");
         UpdateViewLabel(); Redraw(); Console.WriteLine($"CADSPACE_VIEW: {view}");
     }
+    private bool _redrawPending;
     public void Redraw()
     {
+        if(_redrawPending)return;_redrawPending=true;
+        if(!DispatcherQueue.TryEnqueue(()=>{_redrawPending=false;DrawPending();}))_redrawPending=false;
+    }
+    private void DrawPending()
+    {
+        _dynamic.Refresh();
         if (Is3D) _model?.Invalidate();
         else
         {
-            if (_session != null) _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   previous CPU draw {_lastCpuDrawMilliseconds:0.0} ms";
+            if (_session != null && Stopwatch.GetElapsedTime(_lastMetricUpdate).TotalMilliseconds>250) { _lastMetricUpdate=Stopwatch.GetTimestamp(); _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   previous CPU draw {_lastCpuDrawMilliseconds:0.0} ms"; }
             _draft.Invalidate();
         }
     }
@@ -127,7 +136,18 @@ public sealed class CadViewport : Grid
     {
         if (_session == null || _commands == null) return;
         var current = e.GetCurrentPoint(this); _previous = _pressScreen = current.Position; _pressWorld = World(current.Position); _dragged = false;
-        if (current.Properties.IsRightButtonPressed) { _commands.Submit(""); e.Handled = true; return; }
+        if (current.Properties.IsRightButtonPressed)
+        {
+            if(_commands.IsActive) _commands.Submit("");
+            else
+            {
+                var menu=new MenuFlyout();
+                foreach(var name in new[]{"MOVE","COPY","ERASE","SELECTALL","ZOOM","UNDO","REDO"})
+                {var item=new MenuFlyoutItem{Text=name};item.Click+=(_,_)=>_commands.Start(name);menu.Items.Add(item);}
+                menu.ShowAt(this,new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions{Position=current.Position});
+            }
+            e.Handled=true;return;
+        }
         _pan = current.Properties.IsMiddleButtonPressed; _orbit = Is3D && !_commands.IsActive && current.Properties.IsLeftButtonPressed;
         if (_pan || _orbit) { CapturePointer(e.Pointer); e.Handled = true; return; }
         if (!current.Properties.IsLeftButtonPressed) return;
@@ -147,7 +167,7 @@ public sealed class CadViewport : Grid
         if (_orbit && (Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5 || _dragged)) { _dragged = true; ModelCamera.Orbit(dx, dy); }
         if (_selecting && Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5) _dragged = true;
         var world = World(p); _snap = _commands.IsActive ? _session.Snap(world, 9 / Camera.PixelsPerUnit, _commands.ReferencePoint) : new(world, SnapKind.None);
-        _cursor = _snap.Point; CoordinatesChanged?.Invoke(_cursor); Redraw();
+        _cursor = _snap.Point; _dynamic.Position(p.X,p.Y,ActualWidth,ActualHeight,_cursor); CoordinatesChanged?.Invoke(_cursor); Redraw();
     }
     private void Released(object sender, PointerRoutedEventArgs e)
     {

@@ -10,7 +10,10 @@ public enum ModelVisualStyle { Wireframe, HiddenLine, Shaded, ShadedEdges }
 /// <summary>Depth-tested geometry, selection, section clipping and world-plane text in OpenGL 3.3 / GLES 3.0.</summary>
 public sealed class GlSceneRenderer
 {
-    private uint _program, _vao, _vertices;
+    private uint _program, _vao, _vertices, _highlight;
+    private readonly SelectionStream _flags = new();
+    public long GeometryUploads { get; private set; }
+    public long SelectionBytesUploaded { get; private set; }
     private int _matrix, _clip, _flat, _triangleCount, _lineCount, _pointCount;
     private DrawingScene? _uploaded;
     private Vec3 _origin;
@@ -24,11 +27,13 @@ public sealed class GlSceneRenderer
         var version = language.Contains("OpenGL ES", StringComparison.OrdinalIgnoreCase) ? "#version 300 es" : "#version 330 core";
         try
         {
-            _program = Link(gl, version + "\nprecision highp float;\nlayout(location=0) in vec3 aPosition;layout(location=1) in vec3 aNormal;layout(location=2) in vec3 aColor;uniform mat4 uMatrix;out vec3 vColor;out vec3 vWorld;void main(){float n=length(aNormal);float light=n<0.1?1.0:(0.35+0.65*abs(dot(normalize(aNormal),normalize(vec3(0.4,-0.5,0.8)))));vColor=aColor*light;vWorld=aPosition;gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=5.0;}",
+            _program = Link(gl, version + "\nprecision highp float;\nlayout(location=0) in vec3 aPosition;layout(location=1) in vec3 aNormal;layout(location=2) in vec3 aColor;layout(location=3) in float aSelected;uniform mat4 uMatrix;out vec3 vColor;out vec3 vWorld;void main(){float n=length(aNormal);float light=n<0.1?1.0:(0.35+0.65*abs(dot(normalize(aNormal),normalize(vec3(0.4,-0.5,0.8)))));vColor=mix(aColor,vec3(0.337,0.675,1.0),aSelected)*light;vWorld=aPosition;gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=5.0;}",
                 version + "\nprecision highp float;\nin vec3 vColor;in vec3 vWorld;uniform vec4 uClip;uniform int uFlat;out vec4 outColor;void main(){if(dot(uClip.xyz,vWorld)+uClip.w>0.0)discard;outColor=vec4(uFlat==1?vec3(0.114,0.141,0.173):vColor,1.0);}");
             _matrix = gl.GetUniformLocation(_program, "uMatrix"); _clip = gl.GetUniformLocation(_program, "uClip"); _flat = gl.GetUniformLocation(_program, "uFlat");
             _vao = gl.GenVertexArray(); _vertices = gl.GenBuffer(); gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices);
             for (uint i = 0; i < 3; i++) { gl.VertexAttribPointer(i, 3, VertexAttribPointerType.Float, false, 9 * sizeof(float), (void*)(i * 3 * sizeof(float))); gl.EnableVertexAttribArray(i); }
+            _highlight=gl.GenBuffer(); gl.BindBuffer(BufferTargetARB.ArrayBuffer,_highlight);
+            gl.VertexAttribPointer(3,1,VertexAttribPointerType.Float,false,sizeof(float),(void*)0); gl.EnableVertexAttribArray(3);
             _text.Initialize(gl, version); Device = gl.GetStringS(StringName.Renderer); _uploaded = null;
             Console.WriteLine($"CADSPACE_GPU_INITIALIZED: {Device}; {language}");
         }
@@ -66,11 +71,23 @@ public sealed class GlSceneRenderer
         {
             gl.Enable(EnableCap.DepthTest); gl.DepthFunc(DepthFunction.Lequal); gl.DepthMask(true); gl.Disable(EnableCap.Blend); gl.Disable(EnableCap.CullFace); gl.Disable(EnableCap.ScissorTest); gl.ColorMask(true, true, true, true);
             gl.ClearColor(.114f, .141f, .173f, 1); gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-            if (!ReferenceEquals(scene, _uploaded) || _origin != camera.Origin || !_selection.SetEquals(selection))
+            var geometryChanged = !ReferenceEquals(scene, _uploaded) || _origin != camera.Origin;
+            if (geometryChanged)
             {
-                Upload(gl, scene, camera.Origin, selection); _text.Upload(gl, scene, camera.Origin, selection);
-                _uploaded = scene; _origin = camera.Origin; _selection = selection.ToHashSet();
+                Upload(gl, scene, camera.Origin, selection);
+                _uploaded = scene; _origin = camera.Origin; GeometryUploads++;
                 Console.WriteLine($"CADSPACE_GPU_FRAME: triangles={_triangleCount / 3}; lines={_lineCount / 2}");
+            }
+            if (geometryChanged || !_selection.SetEquals(selection))
+            {
+                gl.BindBuffer(BufferTargetARB.ArrayBuffer,_highlight);
+                foreach(var range in _flags.Update(selection))
+                {
+                    gl.BufferSubData<float>(BufferTargetARB.ArrayBuffer,(nint)(range.Start*sizeof(float)),_flags.Values.AsSpan(range.Start,range.Count));
+                    SelectionBytesUploaded+=(long)range.Count*sizeof(float);
+                }
+                _text.Upload(gl,scene,camera.Origin,selection); _selection=selection.ToHashSet();
+                Console.WriteLine($"CADSPACE_GPU_UPLOADS: geometry={GeometryUploads}; selectionBytes={SelectionBytesUploaded}");
             }
             gl.UseProgram(_program); gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices);
             var matrix = camera.Matrix(width / Math.Max(1, height)); gl.UniformMatrix4(_matrix, 1, false, (float*)&matrix); SetClip(gl, _clip, clip, camera.Origin);
@@ -93,28 +110,33 @@ public sealed class GlSceneRenderer
     }
     private void Upload(GL gl, DrawingScene scene, Vec3 origin, IReadOnlySet<Guid> selection)
     {
-        var data = new List<float>();
+        var capacity = checked(scene.Triangles.Length*3 + scene.Paths.Sum(p => p.Points.Length==1?1:Math.Max(0,p.Points.Length-(p.Closed?0:1))*2));
+        var data = new float[checked(capacity*9)]; var offset=0; _flags.Clear();
         void Vertex(Vec3 position, Vec3 normal, uint color, Guid id, double tint = 1)
         {
-            if (selection.Contains(id)) color = 0xFF56ACFF;
             var p = position - origin;
-            data.AddRange([(float)p.X, (float)p.Y, (float)p.Z, (float)normal.X, (float)normal.Y, (float)normal.Z, (float)(((color >> 16) & 255) / 255.0 * tint), (float)(((color >> 8) & 255) / 255.0 * tint), (float)((color & 255) / 255.0 * tint)]);
+            data[offset++]=(float)p.X; data[offset++]=(float)p.Y; data[offset++]=(float)p.Z;
+            data[offset++]=(float)normal.X; data[offset++]=(float)normal.Y; data[offset++]=(float)normal.Z;
+            data[offset++]=(float)(((color>>16)&255)/255.0*tint); data[offset++]=(float)(((color>>8)&255)/255.0*tint); data[offset++]=(float)((color&255)/255.0*tint);
+            _flags.AddVertex(id);
         }
         foreach (var triangle in scene.Triangles)
         {
             var n = (triangle.B - triangle.A).Cross(triangle.C - triangle.A); if (n.Length < 1e-12) continue; n = n.Normalized;
             Vertex(triangle.A, n, triangle.Color, triangle.EntityId); Vertex(triangle.B, n, triangle.Color, triangle.EntityId); Vertex(triangle.C, n, triangle.Color, triangle.EntityId);
         }
-        _triangleCount = data.Count / 9;
+        _triangleCount = offset / 9;
         foreach (var path in scene.Paths)
             for (var i = 0; i < path.Points.Length - (path.Closed ? 0 : 1); i++) { Vertex(path.Points[i], default, path.Color, path.EntityId, .8); Vertex(path.Points[(i + 1) % path.Points.Length], default, path.Color, path.EntityId, .8); }
-        _lineCount = data.Count / 9 - _triangleCount;
+        _lineCount = offset / 9 - _triangleCount;
         foreach (var path in scene.Paths.Where(p => p.Points.Length == 1)) Vertex(path.Points[0], default, path.Color, path.EntityId);
-        _pointCount = data.Count / 9 - _triangleCount - _lineCount;
-        gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices); gl.BufferData<float>(BufferTargetARB.ArrayBuffer, data.ToArray().AsSpan(), BufferUsageARB.StaticDraw);
+        _pointCount = offset / 9 - _triangleCount - _lineCount;
+        gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices); gl.BufferData<float>(BufferTargetARB.ArrayBuffer, data.AsSpan(0,offset), BufferUsageARB.StaticDraw);
+        _flags.Allocate(); gl.BindBuffer(BufferTargetARB.ArrayBuffer,_highlight); gl.BufferData<float>(BufferTargetARB.ArrayBuffer,_flags.Values.AsSpan(),BufferUsageARB.DynamicDraw);
     }
     public void Destroy(GL gl)
     {
+        if (_highlight != 0) gl.DeleteBuffer(_highlight); _highlight=0; _flags.Clear();
         _text.Destroy(gl); if (_vao != 0) gl.DeleteVertexArray(_vao); if (_vertices != 0) gl.DeleteBuffer(_vertices); if (_program != 0) gl.DeleteProgram(_program);
         _vao = _vertices = _program = 0; _uploaded = null;
     }
