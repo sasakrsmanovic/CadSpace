@@ -1,6 +1,7 @@
 <Project Sdk="Uno.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net10.0-desktop;net10.0-browserwasm</TargetFrameworks>
+    <TargetFrameworks Condition="'$(CadSpaceDesktopOnly)' == 'true'">net10.0-desktop</TargetFrameworks>
     <OutputType>Exe</OutputType><UnoSingleProject>true</UnoSingleProject><IsPackable>false</IsPackable>
     <ApplicationTitle>CadSpace</ApplicationTitle><ApplicationId>org.cadspace.studio</ApplicationId>
     <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion><ApplicationVersion>1</ApplicationVersion>

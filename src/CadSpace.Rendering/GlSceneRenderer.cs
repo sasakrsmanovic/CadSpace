@@ -5,7 +5,7 @@ using Silk.NET.OpenGL;
 
 namespace CadSpace.Rendering;
 
-/// <summary>Depth-tested GPU triangle/line renderer. Uses the common OpenGL 3.3 / GLES 3.0 subset.</summary>
+/// <summary>Depth-tested GPU triangle/line renderer using the OpenGL 3.3 / GLES 3.0 subset.</summary>
 public sealed class GlSceneRenderer
 {
     private uint _program, _vao, _vertices;
@@ -33,6 +33,7 @@ public sealed class GlSceneRenderer
         for (uint i = 0; i < 3; i++) { gl.VertexAttribPointer(i, 3, VertexAttribPointerType.Float, false, 9 * sizeof(float), (void*)(i * 3 * sizeof(float))); gl.EnableVertexAttribArray(i); }
         gl.BindVertexArray((uint)oldVao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, (uint)oldBuffer);
         Device = gl.GetStringS(StringName.Renderer); _uploaded = null;
+        Console.WriteLine($"CADSPACE_GPU_INITIALIZED: {Device}; {language}");
     }
     private static uint Compile(GL gl, ShaderType type, string source)
     {
@@ -46,12 +47,13 @@ public sealed class GlSceneRenderer
         var oldProgram = gl.GetInteger(GetPName.CurrentProgram); var oldVao = gl.GetInteger(GetPName.VertexArrayBinding); var oldBuffer = gl.GetInteger(GetPName.ArrayBufferBinding);
         var depth = gl.IsEnabled(EnableCap.DepthTest); var blend = gl.IsEnabled(EnableCap.Blend); var cull = gl.IsEnabled(EnableCap.CullFace);
         var oldDepthFunction = gl.GetInteger(GetPName.DepthFunc); var oldDepthMask = gl.GetInteger(GetPName.DepthWritemask);
+        var uploaded = false;
         try
         {
             gl.Enable(EnableCap.DepthTest); gl.DepthFunc(DepthFunction.Lequal); gl.DepthMask(true); gl.Disable(EnableCap.Blend); gl.Disable(EnableCap.CullFace);
             gl.ClearColor(0.114f, 0.141f, 0.173f, 1); gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             gl.UseProgram(_program); gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices);
-            if (!ReferenceEquals(scene, _uploaded) || _origin != camera.Origin) Upload(gl, scene, camera.Origin);
+            if (!ReferenceEquals(scene, _uploaded) || _origin != camera.Origin) { Upload(gl, scene, camera.Origin); uploaded = true; }
             var matrix = camera.Matrix(width / Math.Max(1, height)); gl.UniformMatrix4(_matrixLocation, 1, false, (float*)&matrix);
             gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_triangleCount);
             gl.DrawArrays(PrimitiveType.Lines, _triangleCount, (uint)_lineCount);
@@ -61,6 +63,21 @@ public sealed class GlSceneRenderer
             gl.UseProgram((uint)oldProgram); gl.BindVertexArray((uint)oldVao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, (uint)oldBuffer);
             if (!depth) gl.Disable(EnableCap.DepthTest); if (blend) gl.Enable(EnableCap.Blend); if (cull) gl.Enable(EnableCap.CullFace);
             gl.DepthFunc((DepthFunction)oldDepthFunction); gl.DepthMask(oldDepthMask != 0);
+        }
+        if (OperatingSystem.IsBrowser())
+        {
+            // Uno's offscreen host reads into CPU memory immediately after this call. An inherited
+            // pixel-pack buffer or row layout changes the meaning of that pointer in WebGL2.
+            gl.BindBuffer(BufferTargetARB.PixelPackBuffer, 0);
+            gl.PixelStore(PixelStoreParameter.PackAlignment, 4);
+            gl.PixelStore(PixelStoreParameter.PackRowLength, 0);
+            gl.PixelStore(PixelStoreParameter.PackSkipRows, 0);
+            gl.PixelStore(PixelStoreParameter.PackSkipPixels, 0);
+        }
+        if (uploaded)
+        {
+            // These are diagnostic markers, not a claim about GPU completion or display FPS.
+            Console.WriteLine($"CADSPACE_GPU_FRAME: triangles={_triangleCount / 3}; lines={_lineCount / 2}");
         }
     }
     private void Upload(GL gl, DrawingScene scene, Vec3 origin)

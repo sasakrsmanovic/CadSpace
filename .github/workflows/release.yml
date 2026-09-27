@@ -50,7 +50,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Publish desktop
-        run: dotnet publish src/CadSpace.App -c Release -f net10.0-desktop -p:TargetFrameworks=net10.0-desktop -r ${{ matrix.rid }} --self-contained true -p:Version=${{ needs.verify.outputs.version }} -o artifacts/desktop
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-desktop -p:CadSpaceDesktopOnly=true -r ${{ matrix.rid }} --self-contained true -p:Version=${{ needs.verify.outputs.version }} -o artifacts/desktop
       - name: Archive Windows
         if: runner.os == 'Windows'
         shell: pwsh
