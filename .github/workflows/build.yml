@@ -19,10 +19,13 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Geometry and document regression tests
         run: dotnet run --project tests/CadSpace.Tests -c Release
+      - name: DXF and editing regression tests
+        run: dotnet run --project tests/CadSpace.Exchange.Tests -c Release
       - name: Pack reusable libraries
         run: |
-          dotnet pack src/CadSpace.Geometry -c Release -o artifacts/packages
-          dotnet pack src/CadSpace.Model -c Release -o artifacts/packages
+          for project in Geometry Model Dxf Engine; do
+            dotnet pack src/CadSpace.$project -c Release -o artifacts/packages
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: cadspace-core-packages
