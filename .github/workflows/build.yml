@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   core:
     runs-on: ubuntu-latest
+    concurrency:
+      group: cadspace-core-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -40,6 +40,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    concurrency:
+      group: cadspace-desktop-${{ matrix.os }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -49,6 +52,9 @@ jobs:
         run: dotnet build src/CadSpace.App -c Release -f net10.0-desktop -p:TargetFrameworks=net10.0-desktop
   browser:
     runs-on: ubuntu-latest
+    concurrency:
+      group: cadspace-browser-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -98,6 +104,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [core, browser]
     runs-on: ubuntu-latest
+    concurrency:
+      group: cadspace-pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
@@ -105,9 +114,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Only deploy the current main revision
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HEAD=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha')
+          if [ "$HEAD" = "$GITHUB_SHA" ]; then echo 'current=true' >> "$GITHUB_OUTPUT"; else echo 'current=false' >> "$GITHUB_OUTPUT"; fi
       - uses: actions/configure-pages@v5
+        if: steps.head.outputs.current == 'true'
         with:
           enablement: true
       - name: Deploy browser application
+        if: steps.head.outputs.current == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
