@@ -8,7 +8,7 @@ public enum SnapKind { None, Endpoint, Midpoint, Center, Quadrant, Nearest, Grid
 public readonly record struct SnapResult(Vec3 Point, SnapKind Kind, Guid EntityId = default);
 
 /// <summary>Reusable editing context; all document changes are transactions on CadDocument.</summary>
-public sealed class CadSession
+public sealed partial class CadSession
 {
     private DrawingScene? _scene;
     private readonly DrawingSceneCache _sceneCache = new();
@@ -21,7 +21,7 @@ public sealed class CadSession
     public CadSession(CadDocument? document = null)
     {
         Document = document ?? new();
-        Document.Changed += () => { _selection.IntersectWith(Document.Drawing.Entities.Where(IsVisible).Select(e => e.Id)); Changed?.Invoke(); };
+        Document.Changed += PruneSelection;
     }
     public CadDocument Document { get; }
     public IReadOnlySet<Guid> Selection => _selection;
@@ -29,7 +29,7 @@ public sealed class CadSession
     public string ActiveLayout
     {
         get => _activeLayout;
-        set { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A layout name is required."); if (_activeLayout == value) return; _activeLayout = value; _scene = null; _snaps = null; _selection.Clear(); Changed?.Invoke(); }
+        set { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A layout name is required."); if (_activeLayout == value) return; _activeLayout = value; _scene = null; _snaps = null; _selection.Clear(); SelectionRevision++; Changed?.Invoke(); }
     }
     public IEnumerable<string> AvailableLayouts => Document.Drawing.LayoutBlockNames.Keys.Concat(Document.Drawing.Entities.Select(e => e.Layout)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n == "Model" ? 0 : 1).ThenBy(n => n);
     public bool IsVisible(Entity entity) => entity.Visible && entity.Layout.Equals(ActiveLayout, StringComparison.OrdinalIgnoreCase) && Document.Drawing.LayerFor(entity).Visible;
@@ -46,35 +46,9 @@ public sealed class CadSession
         get { if (_scene == null || _sceneRevision != Document.Revision) { _scene = _sceneCache.Build(Document.Drawing, ActiveLayout); _sceneRevision = Document.Revision; _snaps = null; } return _scene; }
     }
     public void Invalidate() => Changed?.Invoke();
-    public void Select(Guid? id, bool additive = false)
-    {
-        if (!additive) _selection.Clear();
-        if (id is Guid value && Document.Drawing.Entities.Any(e => e.Id == value && IsVisible(e))) { if (additive && !_selection.Add(value)) _selection.Remove(value); else _selection.Add(value); }
-        Changed?.Invoke();
-    }
-    public void SelectAll() { _selection.UnionWith(Document.Drawing.Entities.Where(IsVisible).Select(e => e.Id)); Changed?.Invoke(); }
-    public void SelectWindow(Vec3 a, Vec3 b, bool crossing, bool additive = false)
-    {
-        if (!additive) _selection.Clear();
-        var bounds = Bounds3.From([a, b]);
-        foreach (var group in Scene.Paths.GroupBy(p => p.EntityId))
-        {
-            var points = group.SelectMany(p => p.Points).ToArray();
-            var selected = crossing ? group.Any(p => Crosses(p, bounds)) : points.Length > 0 && points.All(bounds.ContainsXY);
-            if (selected) _selection.Add(group.Key);
-        }
-        foreach (var text in Scene.Texts) if (bounds.ContainsXY(text.Position)) _selection.Add(text.EntityId);
-        Changed?.Invoke();
-    }
-    private static bool Crosses(ScenePath path, Bounds3 box)
-    {
-        if (path.Points.Any(box.ContainsXY)) return true;
-        Vec3[] corners = [new(box.Min.X, box.Min.Y), new(box.Max.X, box.Min.Y), new(box.Max.X, box.Max.Y), new(box.Min.X, box.Max.Y)];
-        var edges = path.Closed ? path.Points.Length : path.Points.Length - 1;
-        for (var i = 0; i < edges; i++) for (var j = 0; j < 4; j++)
-            if (GeometryMath.IntersectLinesXY(path.Points[i], path.Points[(i + 1) % path.Points.Length], corners[j], corners[(j + 1) % 4], out _)) return true;
-        return path.Closed && path.Filled && GeometryMath.PointInPolygon(box.Center, path.Points);
-    }
+    public void Select(Guid? id, bool additive = false) => ApplySelection(id is Guid value ? [value] : [], additive ? SelectionMode.Toggle : SelectionMode.Replace);
+    public void SelectAll() => ApplySelection(Document.Drawing.Entities.Where(IsVisible).Select(e => e.Id), SelectionMode.Add);
+    public void SelectWindow(Vec3 a, Vec3 b, bool crossing, bool additive = false) => SelectWindow(a, b, crossing, additive ? SelectionMode.Add : SelectionMode.Replace);
     public Guid? HitTest(Vec3 point, double tolerance)
     {
         if(!point.IsFinite || !double.IsFinite(tolerance) || tolerance<=0)throw new ArgumentException("Invalid pick coordinate or tolerance.");
@@ -131,7 +105,7 @@ public sealed class CadSession
     }
     public Entity[] EditableSelection()
     {
-        var selected = Document.Drawing.Entities.Where(e => _selection.Contains(e.Id)).ToArray();
+        var selected = SelectedEntities();
         if (selected.Length == 0) throw new InvalidOperationException("Select objects first.");
         if (selected.Any(e => Document.Drawing.LayerFor(e).Locked)) throw new InvalidOperationException("Selection contains objects on locked layers.");
         if (selected.Any(e => e is OpaqueEntity)) throw new NotSupportedException("Opaque DXF objects cannot be edited.");

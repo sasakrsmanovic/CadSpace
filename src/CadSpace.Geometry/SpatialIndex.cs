@@ -15,6 +15,7 @@ public sealed class SpatialIndex
             throw new ArgumentException("The spatial index needs finite nonempty bounds, at most two million items.");
         _items = Enumerable.Range(0, _bounds.Length).ToArray();
         var nodes = new List<Node>();
+        var comparers = Enumerable.Range(0, 3).Select(axis => new CenterComparer(_bounds, axis)).ToArray();
         int Build(int start, int count)
         {
             var box = Bounds3.Empty; for (var i = start; i < start + count; i++) box = box.Union(_bounds[_items[i]]);
@@ -23,15 +24,49 @@ public sealed class SpatialIndex
             else
             {
                 var size = box.Size; var axis = size.X >= size.Y && size.X >= size.Z ? 0 : size.Y >= size.Z ? 1 : 2;
-                double Center(int item) { var b = _bounds[item]; return axis == 0 ? b.Min.X / 2 + b.Max.X / 2 : axis == 1 ? b.Min.Y / 2 + b.Max.Y / 2 : b.Min.Z / 2 + b.Max.Z / 2; }
-                Array.Sort(_items, start, count, Comparer<int>.Create((a,b) => { var c = Center(a).CompareTo(Center(b)); return c == 0 ? a.CompareTo(b) : c; }));
-                var half = count / 2; Build(start, half); Build(start + half, count - half);
+                var half = count / 2;
+                SelectMedian(_items, start, count, start + half, comparers[axis]);
+                Build(start, half); Build(start + half, count - half);
                 nodes[index] = new(box, 0, 0, nodes.Count);
             }
             return index;
         }
         if (_bounds.Length > 0) Build(0, _bounds.Length);
         _nodes = nodes.ToArray();
+    }
+    private sealed class CenterComparer(Bounds3[] bounds, int axis) : IComparer<int>
+    {
+        private double Center(int item)
+        {
+            var b = bounds[item];
+            return axis == 0 ? b.Min.X / 2 + b.Max.X / 2 : axis == 1 ? b.Min.Y / 2 + b.Max.Y / 2 : b.Min.Z / 2 + b.Max.Z / 2;
+        }
+        public int Compare(int a, int b) { var c = Center(a).CompareTo(Center(b)); return c == 0 ? a.CompareTo(b) : c; }
+    }
+    // Partition at the exact median rather than re-sorting every full subtree. The iteration
+    // budget falls back to the platform introsort for pathological inputs; tree depth stays bounded.
+    private static void SelectMedian(int[] items, int start, int count, int median, IComparer<int> compare)
+    {
+        var left = start; var right = start + count - 1; var budget = 2 * (int)Math.Log2(count) + 2;
+        void Swap(int a, int b) => (items[a], items[b]) = (items[b], items[a]);
+        while (left < right)
+        {
+            if (right - left < 24 || budget-- == 0) { Array.Sort(items, left, right - left + 1, compare); return; }
+            var middle = left + (right - left) / 2;
+            if (compare.Compare(items[left], items[middle]) > 0) Swap(left, middle);
+            if (compare.Compare(items[left], items[right]) > 0) Swap(left, right);
+            if (compare.Compare(items[middle], items[right]) > 0) Swap(middle, right);
+            var pivot = items[middle]; var i = left; var j = right;
+            while (i <= j)
+            {
+                while (compare.Compare(items[i], pivot) < 0) i++;
+                while (compare.Compare(items[j], pivot) > 0) j--;
+                if (i <= j) { Swap(i, j); i++; j--; }
+            }
+            if (median <= j) right = j;
+            else if (median >= i) left = i;
+            else return;
+        }
     }
     public int Query(Bounds3 box, List<int> result, bool xyOnly = false)
     {

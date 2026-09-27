@@ -1,5 +1,7 @@
 var tests=new List<(string Name,Action Run)>();
 PerformanceRegression.Register((name,run)=>tests.Add((name,run)));
+InteractionRegression.Register((name,run)=>tests.Add((name,run)));
+RecoveryRegression.Register((name,run)=>tests.Add((name,run)));
 var failures=0;
 foreach(var (name,run) in tests)
     try {run();Console.WriteLine($"PASS {name}");}

@@ -8,7 +8,7 @@ public sealed class CadDocument
 {
     private readonly Stack<(string Name, Drawing State)> _undo = new();
     private readonly Stack<(string Name, Drawing State)> _redo = new();
-    private Drawing _saved;
+    private Drawing? _saved;
     public CadDocument(Drawing? drawing = null) { Drawing = drawing ?? Drawing.Empty; _saved = Drawing; Validate(Drawing); }
     public Drawing Drawing { get; private set; }
     public long Revision { get; private set; }
@@ -26,6 +26,7 @@ public sealed class CadDocument
     public void Add(string name, params Entity[] entities) => Edit(name, s => s with { Entities = s.Entities.AddRange(entities) });
     public void Undo() { if (_undo.TryPop(out var p)) { _redo.Push((p.Name, Drawing)); Drawing = p.State; Notify(); } }
     public void Redo() { if (_redo.TryPop(out var p)) { _undo.Push((p.Name, Drawing)); Drawing = p.State; Notify(); } }
+    public void MarkUnsaved() { _saved = null; Changed?.Invoke(); }
     public void MarkSaved() { _saved = Drawing; Changed?.Invoke(); }
     public void Load(Drawing drawing) { Validate(drawing); Drawing = drawing; _saved = drawing; _undo.Clear(); _redo.Clear(); Notify(); }
     private void Notify() { Revision++; Changed?.Invoke(); }

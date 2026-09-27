@@ -24,6 +24,10 @@ public sealed class CommandEngine(CadSession session)
     public event Action<string>? ViewRequested;
     public static IReadOnlyList<CommandInfo> Commands { get; } = new CommandInfo[]
     {
+        new("RENDERSTATS", "RS", "Report actual scene, overlay and GPU draw counts", "View"),
+        new("STRETCH", "S", "Crossing corners, base point and displacement point; supported vertices", "Modify"),
+        new("QSELECT", "QS", "Filter kind,layer,mode,scope; * wildcard, Replace/Add/Remove, All/Selection", "Edit"),
+        new("SELECTSIMILAR", "SE", "Select visible objects with the selected kind and layer", "Edit"),
         new("3DPOLY", "3P", "WCS polyline; Enter finishes, C closes", "Draw"),
         new("SPLINE", "SPL", "Clamped cubic control-point spline; Enter finishes", "Draw"),
         new("ROTATE3D", "3R", "Selected objects, two axis points and angle", "Modify"),
@@ -76,8 +80,9 @@ public sealed class CommandEngine(CadSession session)
                     case "EXPLODE": Session.Explode(); Cancel(); return;
                     case "JOIN": Session.JoinLines(); Cancel(); return;
                     case "SELECTALL": Session.SelectAll(); Cancel(); return;
+                    case "SELECTSIMILAR": Session.SelectSimilar(); Cancel(); return;
                     case "HELP": Message?.Invoke(string.Join("  ·  ", Commands.Select(c => $"{c.Name} ({c.Alias})"))); Cancel(); return;
-                    case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
+                    case "RENDERSTATS": case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
                     case "AREA":
                         var polygons = Session.EditableSelection().OfType<PolylineEntity>().Where(p => p.Closed).ToArray();
                         if (polygons.Length == 0) throw new ArgumentException("Select closed polylines for area measurement.");
@@ -102,6 +107,16 @@ public sealed class CommandEngine(CadSession session)
                 Session.Add("Polyline", _active == "3DPOLY" ? new Polyline3DEntity(_points.ToImmutableArray(), true) : PolylineEntity.FromPoints(_points, true)); Cancel(); return;
             }
             if (_active is "BLOCK" or "INSERT" && _text.Length == 0) { _text = input; if (_active == "INSERT" && !Session.Document.Drawing.Blocks.ContainsKey(_text)) throw new ArgumentException("Block not found."); UpdatePrompt(); return; }
+            if (_active == "QSELECT")
+            {
+                var parts = input.Split(',', StringSplitOptions.TrimEntries);
+                if (parts.Length < 2 || parts.Length > 4) throw new ArgumentException("Use kind,layer[,Replace|Add|Remove[,All|Selection]]. Use * for any kind/layer.");
+                var mode = SelectionMode.Replace;
+                if (parts.Length >= 3 && (!Enum.TryParse(parts[2], true, out mode) || !Enum.IsDefined(mode))) throw new ArgumentException("Invalid selection mode.");
+                if (parts.Length == 4 && !parts[3].Equals("All", StringComparison.OrdinalIgnoreCase) && !parts[3].Equals("Selection", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Scope must be All or Selection.");
+                Session.QuickSelect(parts[0], parts[1], mode, parts.Length == 4 && parts[3].Equals("Selection", StringComparison.OrdinalIgnoreCase));
+                Message?.Invoke($"Selected {Session.Selection.Count} objects."); Cancel(); return;
+            }
             if (_active == "TEXT" && _points.Count == 1) { Session.Add("Text", new TextEntity(_points[0], input, 12)); Cancel(); return; }
             if (_active == "VSCURRENT")
             {
@@ -132,13 +147,14 @@ public sealed class CommandEngine(CadSession session)
         if (!IsActive || !point.IsFinite) return;
         try
         {
-            if (RequiresNumber || _active == "ARRAY" || (_active is "BLOCK" or "INSERT" && _text.Length == 0)) { Message?.Invoke(Prompt); return; }
+            if (RequiresNumber || _active is "ARRAY" or "QSELECT" || (_active is "BLOCK" or "INSERT" && _text.Length == 0)) { Message?.Invoke(Prompt); return; }
             if (_active == "TEXT" && _points.Count == 1) { Message?.Invoke("Enter the text in the command line."); return; }
             if (_active is "TRIM" or "EXTEND") { Session.TrimOrExtend(point, PickTolerance, _active == "EXTEND"); Cancel(); return; }
             if (_active == "PLINE" && _points.Count > 0 && _points[^1].DistanceTo(point) <= 1e-9) { Message?.Invoke("Specify a different vertex."); return; }
             _points.Add(point);
             switch (_active)
             {
+                case "STRETCH" when _points.Count == 4: Session.Stretch(_points[0], _points[1], point - _points[2]); Cancel(); return;
                 case "MIRROR3D" when _points.Count == 3: Session.TransformSelection("Mirror 3D", AdvancedEditing.MirrorPlane(_points[0],_points[1],point)); Cancel(); return;
                 case "ALIGN3D" when _points.Count == 6: Session.TransformSelection("Align 3D", AdvancedEditing.Align(_points[0],_points[1],_points[2],_points[3],_points[4],point)); Cancel(); return;
                 case "POINT": Session.Add("Point", new PointEntity(point)); Cancel(); return;
@@ -211,6 +227,8 @@ public sealed class CommandEngine(CadSession session)
     {
         Prompt = _active switch
         {
+            "STRETCH" => _points.Count switch { 0 => "Specify first crossing corner", 1 => "Specify opposite crossing corner", 2 => "Specify stretch base point", _ => "Specify displacement point" },
+            "QSELECT" => "Enter kind,layer[,Replace|Add|Remove[,All|Selection]]; * matches any",
             "VSCURRENT" => "Enter Wireframe / HiddenLine / Shaded / ShadedEdges",
             "PERSPECTIVE" => "Enter 1 for perspective or 0 for orthographic",
             "CLIP3D" => "Enter point and normal: x,y,z,nx,ny,nz; or OFF",
@@ -246,11 +264,14 @@ public sealed class CommandEngine(CadSession session)
         var a = _points[0];
         return _active switch
         {
+            "STRETCH" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true)],
+            "STRETCH" when _points.Count == 3 => Session.PreviewStretch(_points[0], _points[1], cursor - _points[2]),
+            "STRETCH" => [],
             "LINE" => [new LineEntity(_points[^1], cursor)],
             "PLINE" or "3DPOLY" or "SPLINE" => [PolylineEntity.FromPoints(_points.Append(cursor))],
             "RECTANG" or "BOX" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true)],
             "CIRCLE" or "CYLINDER" or "CONE" or "SPHERE" when _points.Count == 1 => [new CircleEntity(a, Math.Max(1e-8, a.DistanceTo(cursor)))],
-            "MOVE" or "COPY" => Session.Document.Drawing.Entities.Where(e => Session.Selection.Contains(e.Id)).Select(e => EntityGeometry.Transform(e, Transform3.Translation(cursor - a))).ToArray(),
+            "MOVE" or "COPY" => Session.SelectedEntities().Select(e => EntityGeometry.Transform(e, Transform3.Translation(cursor - a))).ToArray(),
             "DIMALIGNED" when _points.Count == 2 => [new DimensionEntity(a, _points[1], cursor)],
             _ => [new LineEntity(_points[^1], cursor)]
         };
