@@ -25,7 +25,7 @@ internal static class DxfEntityReader
                 if (header.Any(p => p.Code is 40 or 41 or 43 && Number(p.Value) != 0)) throw new NotSupportedException("Variable-width polyline faces are not implemented.");
                 var points = Vertices(header, N(header, 38));
                 if (I(header, 90, points.Length) != points.Length) throw new FormatException("LWPOLYLINE vertex count mismatch.");
-                entity = InPlane(new PolylineEntity(points, (I(header, 70) & 1) != 0)); break;
+                entity = InPlane(new PolylineEntity(points, (I(header, 70) & 1) != 0) { ContinuousLinetype = (I(header, 70) & 128) != 0 }); break;
             case "POLYLINE": entity = LegacyPolyline(header, pieces.Skip(1).ToArray(), InPlane, warn); break;
             case "SPLINE": entity = Spline(header); break;
             case "ELLIPSE":
@@ -92,9 +92,9 @@ internal static class DxfEntityReader
                 entity = Thickened(entity, normal.Normalized * thickness);
             else warn($"{type} thickness is retained in source data but not interpreted for display.");
         }
-        if (S(header, 6, "BYLAYER") is not ("BYLAYER" or "BYBLOCK" or "CONTINUOUS")) warn("Custom entity linetypes are retained in source data; display currently uses continuous strokes.");
+        
         var layer = S(header, 8, "0");
-        entity = entity with { Layer = layer, Handle = S(header, 5), ColorIndex = I(header, 62, 256), TrueColor = Has(header, 420) ? 0xFF000000u | (uint)I(header, 420) : null, LineWeight = N(header, 370, -100) / 100, Visible = I(header, 60) == 0, Layout = S(header, 410, I(header, 67) == 0 ? "Model" : "Layout1") };
+        entity = entity with { Layer = layer, Handle = S(header, 5), ColorIndex = I(header, 62, 256), TrueColor = Has(header, 420) ? 0xFF000000u | (uint)I(header, 420) : null, LineWeight = N(header, 370, -100) / 100, Linetype = S(header, 6, "BYLAYER"), LinetypeScale = N(header, 48, 1), Visible = I(header, 60) == 0, Layout = S(header, 410, I(header, 67) == 0 ? "Model" : "Layout1") };
         return entity;
     }
 
@@ -145,7 +145,7 @@ internal static class DxfEntityReader
         if ((flags & 8) != 0) return new Polyline3DEntity(vertices.Select(v => P(v, 10)).ToImmutableArray(), (flags & 1) != 0);
         if (N(header, 40) != 0 || N(header, 41) != 0 || vertices.Any(v => N(v, 40) != 0 || N(v, 41) != 0)) throw new NotSupportedException("Wide legacy POLYLINE is retained without flattening widths.");
         var elevation = N(header, 30);
-        return inPlane(new PolylineEntity(vertices.Select(v => new PolyVertex(new(P(v, 10).X, P(v, 10).Y, elevation), N(v, 42))).ToImmutableArray(), (flags & 1) != 0));
+        return inPlane(new PolylineEntity(vertices.Select(v => new PolyVertex(new(P(v, 10).X, P(v, 10).Y, elevation), N(v, 42))).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 });
     }
 
     private static SplineEntity Spline(ImmutableArray<DxfPair> p)

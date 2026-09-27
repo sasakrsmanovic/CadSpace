@@ -148,6 +148,8 @@ public sealed partial class CadWorkspace : UserControl
     {
         if (_session != null) _session.Changed -= RefreshLayouts;
         _session = session; _layoutDrawing = null; _session.Changed += RefreshLayouts; RefreshLayouts();
+        if (_commands != null) _commands.ViewRequested -= OnStyleRequested;
+        commands.ViewRequested += OnStyleRequested;
         _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); SetTitle(session.Document.Drawing.Name);
     }
 }
