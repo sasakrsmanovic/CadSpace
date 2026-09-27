@@ -98,7 +98,7 @@ public sealed partial class CadViewport : Grid
     private void UpdateViewLabel() => _viewLabel.Text = Is3D ? $"[{(ModelCamera.Orthographic ? "Orthographic" : "Perspective")}]  [{VisualStyle}]  •  click to select, drag to orbit" + (ClippingPlane != null ? "  •  section clipping (uncapped)" : "") : "[Top]  [2D Wireframe]";
     private void OnView(string view)
     {
-        if (view == "RENDERSTATS") { ReportRenderStatistics(); return; }
+        if (view == "RENDERSTATS") { ReportRenderStatistics(); Console.WriteLine($"CADSPACE_HOST_CALLBACKS: scene={_sceneCallbacks}; model={_modelCallbacks}"); return; }
         if (view == "ZOOM") { Fit(); return; }
         if (view.StartsWith("STYLE:")) { VisualStyle = Enum.Parse<ModelVisualStyle>(view[6..], true); _styleSelector.SelectedItem = VisualStyle.ToString(); Set3D(true); }
         else if (view.StartsWith("PROJECTION:")) { ModelCamera.Orthographic = view[11..] == "0"; Set3D(true); }
@@ -123,9 +123,7 @@ public sealed partial class CadViewport : Grid
         if (_session == null || ActualWidth <= 0 || ActualHeight <= 0) return;
         Camera.Width = ActualWidth; Camera.Height = ActualHeight;
         if (_fit && ActualWidth > 100 && ActualHeight > 100) { Camera.Fit(_session.Scene.Bounds); _fit = false; }
-        var stamp = new RenderStamp(_session.Scene, _session.SelectionRevision, Camera.Center, Camera.PixelsPerUnit,
-            ActualWidth, ActualHeight, _session.GridVisible, _session.GridSpacing, Is3D, ModelCamera.Origin,
-            ModelCamera.TargetOffset, ModelCamera.Distance, ModelCamera.Yaw, ModelCamera.Pitch, ModelCamera.Orthographic, VisualStyle, ClippingPlane);
+        var stamp = CaptureRenderStamp(ActualWidth, ActualHeight);
         if (_lastRender != stamp)
         {
             _lastRender = stamp;
@@ -135,7 +133,7 @@ public sealed partial class CadViewport : Grid
         if (!Is3D && Stopwatch.GetElapsedTime(_lastMetricUpdate).TotalMilliseconds > 250)
         {
             _lastMetricUpdate = Stopwatch.GetTimestamp();
-            _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   scene {_sceneDraws}   •   overlay {_overlayDraws}   •   previous CPU scene {_lastCpuDrawMilliseconds:0.0} ms";
+            _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   scene {_sceneDraws}   •   overlay {_overlayDraws}   •   previous CPU recording {_lastCpuDrawMilliseconds:0.0} ms";
         }
     }
     private void Fault(string message) => DispatcherQueue.TryEnqueue(() => { Message?.Invoke(message); Set3D(false); });
@@ -218,35 +216,5 @@ public sealed partial class CadViewport : Grid
         var p = e.GetCurrentPoint(this); var factor = Math.Pow(1.18, p.Properties.MouseWheelDelta / 120.0);
         if (Is3D) ModelCamera.ZoomAt(factor, p.Position.X, p.Position.Y, ActualWidth, ActualHeight); else Camera.Zoom(factor, p.Position.X, p.Position.Y);
         Redraw(); e.Handled = true;
-    }
-    private sealed class DraftSurface(CadViewport owner) : SKCanvasElement
-    {
-        private readonly SkiaDraftRenderer _renderer = new();
-        protected override void RenderOverride(SKCanvas canvas, Size area)
-        {
-            var session = owner._session; if (session == null) return;
-            owner.Camera.Width = area.Width; owner.Camera.Height = area.Height;
-            if (owner._fit && area.Width > 100 && area.Height > 100) { owner.Camera.Fit(session.Scene.Bounds); owner._fit = false; }
-            var start = Stopwatch.GetTimestamp(); _renderer.Render(canvas, owner.Camera, session.Scene, session.Selection, session.GridVisible, session.GridSpacing);
-            owner._sceneDraws++;
-            owner._lastCpuDrawMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        }
-    }
-    private sealed class ModelSurface(CadViewport owner) : GLCanvasElement(null)
-    {
-        private readonly GlSceneRenderer _renderer = new();
-        protected override void Init(GL gl)
-        {
-            try { _renderer.Initialize(gl); owner.DispatcherQueue.TryEnqueue(() => owner._metrics.Text = $"GPU  •  {_renderer.Device}"); }
-            catch (Exception error) { owner.Fault($"3D renderer initialization failed: {error.Message}"); throw; }
-        }
-        protected override void RenderOverride(GL gl)
-        {
-            if (owner._session == null) return;
-            owner._modelDraws++;
-            try { _renderer.Render(gl, owner._session.Scene, owner.ModelCamera, ActualWidth, ActualHeight, owner._session.Selection, owner.VisualStyle, owner.ClippingPlane); }
-            catch (Exception error) { owner.Fault($"3D renderer error: {error.Message}"); }
-        }
-        protected override void OnDestroy(GL gl) => _renderer.Destroy(gl);
     }
 }
