@@ -58,7 +58,7 @@ public static class EntityGeometry
         }
         return result.ToImmutable();
     }
-    public static DrawingScene BuildScene(Drawing drawing)
+    public static DrawingScene BuildScene(Drawing drawing, string layout = "Model")
     {
         var paths = ImmutableArray.CreateBuilder<ScenePath>(); var texts = ImmutableArray.CreateBuilder<SceneText>(); var triangles = ImmutableArray.CreateBuilder<SceneTriangle>();
         var nodes = 0; var vertices = 0;
@@ -67,7 +67,7 @@ public static class EntityGeometry
             if (depth > 32 || ++nodes > 200000) throw new ArgumentException("Expanded scene exceeds the nesting/entity budget.");
             var layerName = e.Layer == "0" && inheritedLayer != null ? inheritedLayer : e.Layer;
             var layer = drawing.Layers.TryGetValue(layerName, out var l) ? l : drawing.Layers["0"];
-            if (!layer.Visible) return;
+            if (!layer.Visible || !e.Visible) return;
             var color = e.TrueColor ?? (e.ColorIndex == 0 ? inheritedColor ?? layer.Color : e.ColorIndex == 256 ? layer.Color : AciColor(e.ColorIndex));
             var weight = e.LineWeight < 0 ? layer.LineWeight : e.LineWeight;
             void Path(IEnumerable<Vec3> points, bool closed = false, bool fill = false)
@@ -136,7 +136,7 @@ public static class EntityGeometry
                     foreach (var child in block.Entities) Add(child, local, root, layerName, color, depth + 1); break;
             }
         }
-        foreach (var entity in drawing.Entities) Add(entity, Transform3.Identity, entity.Id, null, null, 0);
+        foreach (var entity in drawing.Entities.Where(e => e.Layout.Equals(layout, StringComparison.OrdinalIgnoreCase))) Add(entity, Transform3.Identity, entity.Id, null, null, 0);
         return new(paths.ToImmutable(), texts.ToImmutable(), triangles.ToImmutable());
     }
     public static Entity Transform(Entity entity, Transform3 transform, bool copy = false)
@@ -145,7 +145,7 @@ public static class EntityGeometry
         var scale = transform.X.Length; var mirror = GeometryMath.Cross2(transform.X, transform.Y) < 0;
         var xySimilarity = Math.Abs(transform.X.Dot(transform.Y)) <= 1e-7 * Math.Max(1, scale * scale) && Math.Abs(scale - transform.Y.Length) <= 1e-7 * Math.Max(1, scale) && Math.Abs(transform.X.Z) + Math.Abs(transform.Y.Z) <= 1e-7;
         double Angle(double angle) => GeometryMath.Angle(transform.Vector(GeometryMath.OnCircle(default, 1, angle)));
-        Entity Place() => new PlacedEntity(entity, transform) { Id = entity.Id, Handle = entity.Handle, Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight };
+        Entity Place() => new PlacedEntity(entity, transform) { Id = entity.Id, Handle = entity.Handle, Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Visible = entity.Visible, Layout = entity.Layout };
         Entity result = entity switch
         {
             OpaqueEntity => throw new NotSupportedException("Opaque DXF records cannot be transformed without a geometry interpreter."),

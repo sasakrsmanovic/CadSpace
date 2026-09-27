@@ -37,7 +37,7 @@ public sealed class CadStatusBar : UserControl
         _coordinates.Margin = new Thickness(12, 0, 12, 0); root.Children.Add(_coordinates); Grid.SetColumn(_toggles, 1); root.Children.Add(_toggles); Content = root;
     }
     public void Bind(CadSession session) { _session = session; Refresh(); }
-    public void SetCoordinates(CadSpace.Geometry.Vec3 point) => _coordinates.Text = FormattableString.Invariant($"{point.X:0.000}, {point.Y:0.000}, {point.Z:0.000}     |     MODEL");
+    public void SetCoordinates(CadSpace.Geometry.Vec3 point) => _coordinates.Text = FormattableString.Invariant($"{point.X:0.000}, {point.Y:0.000}, {point.Z:0.000}     |     {_session?.ActiveLayout ?? "Model"}");
     public void Toggle(string name)
     {
         if (_session == null) return;
@@ -66,6 +66,9 @@ public sealed class CadWorkspace : UserControl
     public CadStatusBar StatusBar { get; } = new();
     public event Action<string>? FileRequested;
     private CommandEngine? _commands;
+    private CadSession? _session;
+    private readonly ComboBox _layoutSelector = new() { MinWidth = 100, MinHeight = 25, FontSize = 10 };
+    private bool _updatingLayouts;
     private readonly TextBlock _title = CadTheme.Text("CadSpace  —  Drafting & Modeling", 12);
     private readonly ColumnDefinition _paletteColumn = new() { Width = new GridLength(272) };
     private double _paletteWidth = 272;
@@ -76,7 +79,7 @@ public sealed class CadWorkspace : UserControl
         var titlebar = new Grid { Background = CadTheme.Brush(0xFF20252D) }; titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titlebar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var quick = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3 };
         var brand = CadTheme.Text("CS", 17, 0xFFFFFFFF); brand.Margin = new Thickness(11, 0, 11, 0); quick.Children.Add(CadTheme.Box(brand, 0xFFB44547));
-        foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE"), ("Export DXF", "EXPORT") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
+        foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE"), ("Export DXF", "EXPORT"), ("Binary DXF", "EXPORT_BINARY") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
         quick.Children.Add(CadTheme.Button("↶", () => _commands?.Start("UNDO"))); quick.Children.Add(CadTheme.Button("↷", () => _commands?.Start("REDO")));
         titlebar.Children.Add(quick); _title.HorizontalAlignment = HorizontalAlignment.Center; Grid.SetColumn(_title, 1); titlebar.Children.Add(_title);
         var extras = new StackPanel { Orientation = Orientation.Horizontal }; extras.Children.Add(CadTheme.Button("Studio plan", () => FileRequested?.Invoke("STUDIO"))); extras.Children.Add(CadTheme.Button("3D example", () => FileRequested?.Invoke("MODEL"))); extras.Children.Add(CadTheme.Button("About", () => FileRequested?.Invoke("ABOUT"))); Grid.SetColumn(extras, 2); titlebar.Children.Add(extras);
@@ -88,7 +91,8 @@ public sealed class CadWorkspace : UserControl
         splitter.PointerMoved += (_, e) => { if (!dragging) return; var x = e.GetCurrentPoint(root).Position.X; _paletteWidth = Math.Clamp(_paletteWidth + previousX - x, 245, 520); _paletteColumn.Width = new GridLength(_paletteWidth); previousX = x; };
         splitter.PointerReleased += (_, e) => { dragging = false; splitter.ReleasePointerCapture(e.Pointer); }; splitter.PointerCaptureLost += (_, _) => dragging = false;
         CadTheme.At(root, area, 3);
-        var modelbar = new StackPanel { Orientation = Orientation.Horizontal, Background = CadTheme.Brush(0xFF252C36), Spacing = 4 }; modelbar.Children.Add(CadTheme.Button("MODEL", () => Viewport.Set3D(false))); modelbar.Children.Add(CadTheme.Button("3D VIEW", () => Viewport.Set3D(true))); modelbar.Children.Add(CadTheme.Text("   Model space  •  DXF", 10, CadTheme.Muted)); CadTheme.At(root, modelbar, 4);
+        var modelbar = new StackPanel { Orientation = Orientation.Horizontal, Background = CadTheme.Brush(0xFF252C36), Spacing = 4 }; modelbar.Children.Add(CadTheme.Button("MODEL", () => { if (_session != null) _session.ActiveLayout = "Model"; Viewport.Set3D(false); Viewport.Fit(); })); modelbar.Children.Add(CadTheme.Button("3D VIEW", () => Viewport.Set3D(true))); modelbar.Children.Add(_layoutSelector);
+        _layoutSelector.SelectionChanged += (_, _) => { if (!_updatingLayouts && _session != null && _layoutSelector.SelectedItem is string layout) { _commands?.Cancel(); _session.ActiveLayout = layout; Viewport.Fit(); } }; CadTheme.At(root, modelbar, 4);
         CadTheme.At(root, CommandLine, 5); CadTheme.At(root, StatusBar, 6); Content = root;
         Ribbon.CommandRequested += command => { if (_commands == null) return; if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
         Viewport.CoordinatesChanged += StatusBar.SetCoordinates; Viewport.Message += CommandLine.AddMessage; Palette.Message += CommandLine.AddMessage;
@@ -111,9 +115,17 @@ public sealed class CadWorkspace : UserControl
         };
         KeyboardAccelerators.Add(accelerator);
     }
+    private void RefreshLayouts()
+    {
+        if (_session == null || _updatingLayouts) return; _updatingLayouts = true;
+        try { var names = _session.AvailableLayouts.ToArray(); if (_layoutSelector.ItemsSource is not string[] previous || !previous.SequenceEqual(names)) _layoutSelector.ItemsSource = names; _layoutSelector.SelectedItem = _session.ActiveLayout; }
+        finally { _updatingLayouts = false; }
+    }
     public void SetTitle(string name) => _title.Text = name + "  —  CadSpace";
     public void Bind(CadSession session, CommandEngine commands)
     {
+        if (_session != null) _session.Changed -= RefreshLayouts;
+        _session = session; _session.Changed += RefreshLayouts; RefreshLayouts();
         _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); SetTitle(session.Document.Drawing.Name);
     }
 }

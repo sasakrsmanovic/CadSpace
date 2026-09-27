@@ -34,6 +34,7 @@ public sealed record HatchPatternLine(double Angle, Vec3 Origin, Vec3 Offset, Im
 public sealed record HatchRegionEntity(ImmutableArray<ImmutableArray<PolyVertex>> Loops, bool Solid, ImmutableArray<HatchPatternLine> Pattern, string PatternName = "SOLID", bool SampledBoundary = false) : Entity
 {
     public override string Kind => "HATCH";
+    public int IslandStyle { get; init; }
 }
 
 public static class AdvancedGeometry
@@ -65,7 +66,8 @@ public static class AdvancedGeometry
                 if (composite.Children.Length > 100000) throw new ArgumentException("Too many compound children.");
                 foreach (var child in composite.Children) Validate(child, depth + 1); break;
             case HatchRegionEntity hatch:
-                if (hatch.Loops.IsEmpty || hatch.Loops.Length > 1024 || hatch.Loops.Any(l => l.Length < 3 || l.Length > 100000 || l.Any(v => !v.Position.IsFinite || !double.IsFinite(v.Bulge)))) throw new ArgumentException("Invalid hatch boundary.");
+                if (hatch.IslandStyle is < 0 or > 2) throw new ArgumentException("Invalid hatch island style.");
+                if (hatch.Loops.IsEmpty || hatch.Loops.Length > 1024 || hatch.Loops.Any(l => l.Length < 2 || l.Length > 100000 || l.Any(v => !v.Position.IsFinite || !double.IsFinite(v.Bulge)))) throw new ArgumentException("Invalid hatch boundary.");
                 if (hatch.Pattern.Length > 256 || hatch.Pattern.Any(p => !double.IsFinite(p.Angle) || !p.Origin.IsFinite || !p.Offset.IsFinite || p.Dashes.Length > 256 || p.Dashes.Any(d => !double.IsFinite(d)))) throw new ArgumentException("Invalid hatch pattern.");
                 break;
         }
@@ -136,6 +138,11 @@ public static class AdvancedGeometry
             case CompositeEntity c: foreach (var child in c.Children) yield return child; break;
             case HatchRegionEntity h:
                 var loops = HatchLoops(h);
+                if (h.IslandStyle != 0)
+                {
+                    var all = loops;
+                    loops = all.Where((loop, index) => all.Where((other, j) => j != index && GeometryMath.PointInPolygon(loop[0], other)).Count() <= (h.IslandStyle == 1 ? 1 : 0)).ToImmutableArray();
+                }
                 if (h.Solid)
                 {
                     foreach (var face in PolygonBands.Fill(loops)) yield return face;

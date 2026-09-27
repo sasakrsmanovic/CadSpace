@@ -18,11 +18,13 @@ public static class CadProjectCodec
         using var memory = new MemoryStream();
         using (var writer = new Utf8JsonWriter(memory, new JsonWriterOptions { Indented = true }))
         {
-            writer.WriteStartObject(); writer.WriteString("format", "CadSpace"); writer.WriteNumber("version", 1);
+            writer.WriteStartObject(); writer.WriteString("format", "CadSpace"); writer.WriteNumber("version", 2);
             writer.WritePropertyName("drawing"); WriteDrawing(writer, drawing);
             if (source != null)
             {
                 writer.WriteString("dxfOriginal", source.Text);
+                if (source.OriginalBytes is { } bytes) writer.WriteBase64String("dxfBytes", bytes);
+                writer.WritePropertyName("sourceGraph"); WriteDrawing(writer, source.Original);
                 writer.WritePropertyName("sourceIds"); writer.WriteStartObject();
                 writer.WritePropertyName("model"); WriteIds(writer, source.Original.Entities);
                 writer.WritePropertyName("blocks"); writer.WriteStartObject();
@@ -37,14 +39,16 @@ public static class CadProjectCodec
     public static CadProjectReadResult Read(string text)
     {
         if (text.Length > MaximumCharacters) throw new FormatException("Native project exceeds the 128 Mi-character read limit.");
-        using var document = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 64 });
+        using var document = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 128 });
         var root = document.RootElement;
-        if (root.GetProperty("format").GetString() != "CadSpace" || root.GetProperty("version").GetInt32() != 1) throw new FormatException("Unsupported CadSpace project format/version.");
+        if (root.GetProperty("format").GetString() != "CadSpace" || root.GetProperty("version").GetInt32() is not (1 or 2)) throw new FormatException("Unsupported CadSpace project format/version.");
         var drawing = ReadDrawing(root.GetProperty("drawing"));
         DxfSource? source = null;
         if (root.TryGetProperty("dxfOriginal", out var raw))
         {
-            var parsed = DxfCodec.Read(raw.GetString() ?? throw new FormatException("Missing original DXF."), drawing.Name);
+            var parsed = root.TryGetProperty("dxfBytes", out var originalBytes)
+                ? DxfBinary.Read(originalBytes.GetBytesFromBase64(), drawing.Name)
+                : DxfCodec.Read(raw.GetString() ?? throw new FormatException("Missing original DXF."), drawing.Name);
             var ids = root.GetProperty("sourceIds"); var map = new Dictionary<Guid, Guid>();
             ImmutableArray<Entity> Remap(ImmutableArray<Entity> entities, JsonElement identifiers)
             {
@@ -57,7 +61,15 @@ public static class CadProjectCodec
             foreach (var block in parsed.Drawing.Blocks.Values) blocks = blocks.SetItem(block.Name, block with { Entities = Remap(block.Entities, ids.GetProperty("blocks").GetProperty(block.Name)) });
             original = original with { Blocks = blocks };
             if (map.Values.Distinct().Count() != map.Count) throw new FormatException("Duplicate persistent source entity identifiers.");
-            source = new(parsed.Source.Text, original, parsed.Source.Sections, parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value));
+            if (root.TryGetProperty("sourceGraph", out var sourceGraph))
+            {
+                var savedGraph = ReadDrawing(sourceGraph);
+                if (!savedGraph.Entities.Select(e => e.Id).SequenceEqual(original.Entities.Select(e => e.Id)) ||
+                    savedGraph.Blocks.Count != original.Blocks.Count || savedGraph.Blocks.Any(b => !original.Blocks.TryGetValue(b.Key, out var old) || !b.Value.Entities.Select(e => e.Id).SequenceEqual(old.Entities.Select(e => e.Id))))
+                    throw new FormatException("Inconsistent source provenance graph.");
+                CadDocument.Validate(savedGraph); original = savedGraph;
+            }
+            source = new(parsed.Source.Text, original, parsed.Source.Sections, parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value)) { OriginalBytes = parsed.Source.OriginalBytes };
             // Reuse equal imported instances so untouched group data and exact original-text pass-through remain available.
             drawing = Intern(drawing, original);
         }
@@ -80,13 +92,20 @@ public static class CadProjectCodec
             blocks = blocks.SetItem(block.Name, updated);
         }
         if (blocks.Count == original.Blocks.Count && blocks.All(p => original.Blocks.TryGetValue(p.Key, out var b) && b == p.Value)) blocks = original.Blocks;
-        return drawing with { Entities = entities, Layers = layers, Blocks = blocks };
+        var layouts = drawing.LayoutBlockNames;
+        if (layouts.Count == original.LayoutBlockNames.Count && layouts.All(p => original.LayoutBlockNames.TryGetValue(p.Key, out var name) && name == p.Value)) layouts = original.LayoutBlockNames;
+        return drawing with { Entities = entities, Layers = layers, Blocks = blocks, LayoutBlockNames = layouts };
     }
     private static bool Equivalent(Entity a, Entity b) => (a, b) switch
     {
         (PolylineEntity x, PolylineEntity y) => x.Vertices.SequenceEqual(y.Vertices) && x with { Vertices = y.Vertices } == y,
         (HatchEntity x, HatchEntity y) => x.Boundary.SequenceEqual(y.Boundary) && x with { Boundary = y.Boundary } == y,
         (MeshEntity x, MeshEntity y) => x.Vertices.SequenceEqual(y.Vertices) && x.Triangles.SequenceEqual(y.Triangles) && x with { Vertices = y.Vertices, Triangles = y.Triangles } == y,
+        (Polyline3DEntity x, Polyline3DEntity y) => x.Points.SequenceEqual(y.Points) && x with { Points = y.Points } == y,
+        (SplineEntity x, SplineEntity y) => x.ControlPoints.SequenceEqual(y.ControlPoints) && x.Knots.SequenceEqual(y.Knots) && x.Weights.SequenceEqual(y.Weights) && x with { ControlPoints = y.ControlPoints, Knots = y.Knots, Weights = y.Weights } == y,
+        (PlacedEntity x, PlacedEntity y) => Equivalent(x.Geometry, y.Geometry) && x with { Geometry = y.Geometry } == y,
+        (CompositeEntity x, CompositeEntity y) => x.Children.Length == y.Children.Length && x.Children.Zip(y.Children).All(p => Equivalent(p.First, p.Second)) && x with { Children = y.Children } == y,
+        (HatchRegionEntity x, HatchRegionEntity y) => x.Loops.Length == y.Loops.Length && x.Loops.Zip(y.Loops).All(p => p.First.SequenceEqual(p.Second)) && x.Pattern.Length == y.Pattern.Length && x.Pattern.Zip(y.Pattern).All(p => p.First.Dashes.SequenceEqual(p.Second.Dashes) && p.First with { Dashes = p.Second.Dashes } == p.Second) && x with { Loops = y.Loops, Pattern = y.Pattern } == y,
         _ => a == b
     };
     private static void WriteIds(Utf8JsonWriter writer, IEnumerable<Entity> entities)
@@ -96,6 +115,7 @@ public static class CadProjectCodec
     private static void WriteDrawing(Utf8JsonWriter w, Drawing drawing)
     {
         w.WriteStartObject(); w.WriteString("name", drawing.Name); w.WriteNumber("units", drawing.Units);
+        w.WritePropertyName("layouts"); w.WriteStartObject(); foreach (var layout in drawing.LayoutBlockNames.OrderBy(p => p.Key, StringComparer.Ordinal)) w.WriteString(layout.Key, layout.Value); w.WriteEndObject();
         w.WritePropertyName("layers"); w.WriteStartArray();
         foreach (var layer in drawing.Layers.Values.OrderBy(l => l.Name, StringComparer.Ordinal))
         {
@@ -117,7 +137,7 @@ public static class CadProjectCodec
         }
         var blocks = ImmutableDictionary.Create<string, BlockDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var b in root.GetProperty("blocks").EnumerateArray()) { var block = new BlockDefinition(S(b, "name"), P(b, "base"), ReadEntities(b.GetProperty("entities"))); blocks = blocks.Add(block.Name, block); }
-        return new(ReadEntities(root.GetProperty("entities")), layers, blocks) { Name = S(root, "name"), Units = root.GetProperty("units").GetInt32() };
+        return new(ReadEntities(root.GetProperty("entities")), layers, blocks) { Name = S(root, "name"), Units = root.GetProperty("units").GetInt32(), LayoutBlockNames = root.TryGetProperty("layouts", out var layouts) ? layouts.EnumerateObject().ToImmutableDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase) : Drawing.Empty.LayoutBlockNames };
     }
     private static void Point(Utf8JsonWriter w, string name, Vec3 p) { w.WritePropertyName(name); Point(w, p); }
     private static void Point(Utf8JsonWriter w, Vec3 p) { w.WriteStartArray(); w.WriteNumberValue(p.X); w.WriteNumberValue(p.Y); w.WriteNumberValue(p.Z); w.WriteEndArray(); }
@@ -127,8 +147,8 @@ public static class CadProjectCodec
         w.WriteStartArray();
         foreach (var entity in entities)
         {
-            w.WriteStartObject(); w.WriteString("type", entity is OpaqueEntity ? "OPAQUE" : entity.Kind);
-            w.WriteString("id", entity.Id); w.WriteString("handle", entity.Handle); w.WriteString("layer", entity.Layer); w.WriteNumber("aci", entity.ColorIndex); w.WriteNumber("weight", entity.LineWeight);
+            w.WriteStartObject(); w.WriteString("type", entity switch { OpaqueEntity => "OPAQUE", PlacedEntity => "PLACED", CompositeEntity => "COMPOSITE", HatchRegionEntity => "HATCH_REGION", _ => entity.Kind });
+            w.WriteString("id", entity.Id); w.WriteString("handle", entity.Handle); w.WriteString("layer", entity.Layer); w.WriteNumber("aci", entity.ColorIndex); w.WriteNumber("weight", entity.LineWeight); w.WriteBoolean("visible", entity.Visible); w.WriteString("layout", entity.Layout);
             if (entity.TrueColor is uint color) w.WriteNumber("color", color);
             switch (entity)
             {
@@ -145,6 +165,19 @@ public static class CadProjectCodec
                 case HatchEntity e: Points(w, "boundary", e.Boundary); w.WriteNumber("spacing", e.Spacing); w.WriteNumber("angle", e.Angle); w.WriteBoolean("solid", e.Solid); break;
                 case MeshEntity e: Points(w, "vertices", e.Vertices); w.WritePropertyName("triangles"); w.WriteStartArray(); foreach (var index in e.Triangles) w.WriteNumberValue(index); w.WriteEndArray(); w.WriteString("operation", e.Operation); break;
                 case BlockReferenceEntity e: w.WriteString("name", e.Name); Point(w, "point", e.Position); Point(w, "scale", e.Scale); w.WriteNumber("rotation", e.Rotation); break;
+                case Polyline3DEntity e: Points(w, "points", e.Points); w.WriteBoolean("closed", e.Closed); break;
+                case SplineEntity e:
+                    w.WriteNumber("degree", e.Degree); Points(w, "controls", e.ControlPoints); Numbers(w, "knots", e.Knots); Numbers(w, "weights", e.Weights); w.WriteBoolean("closed", e.Closed); w.WriteBoolean("periodic", e.Periodic); break;
+                case PlacedEntity e:
+                    Points(w, "matrix", [e.Placement.X, e.Placement.Y, e.Placement.Z, e.Placement.Origin]); w.WritePropertyName("geometry"); Entities(w, [e.Geometry]); break;
+                case CompositeEntity e:
+                    w.WriteString("dxfType", e.DxfType); w.WriteString("source", e.SourceRecord); w.WritePropertyName("children"); Entities(w, e.Children); break;
+                case HatchRegionEntity e:
+                    w.WriteString("patternName", e.PatternName); w.WriteNumber("islandStyle", e.IslandStyle); w.WriteBoolean("solid", e.Solid); w.WriteBoolean("sampled", e.SampledBoundary);
+                    w.WritePropertyName("loops"); w.WriteStartArray();
+                    foreach (var loop in e.Loops) { w.WriteStartArray(); foreach (var v in loop) { w.WriteStartObject(); Point(w, "point", v.Position); w.WriteNumber("bulge", v.Bulge); w.WriteEndObject(); } w.WriteEndArray(); } w.WriteEndArray();
+                    w.WritePropertyName("pattern"); w.WriteStartArray();
+                    foreach (var line in e.Pattern) { w.WriteStartObject(); w.WriteNumber("angle", line.Angle); Point(w, "origin", line.Origin); Point(w, "offset", line.Offset); Numbers(w, "dashes", line.Dashes); w.WriteEndObject(); } w.WriteEndArray(); break;
                 case OpaqueEntity e: w.WriteString("dxfType", e.DxfType); w.WriteString("raw", e.RawRecord); break;
                 default: throw new NotSupportedException($"Native persistence does not know entity {entity.Kind}.");
             }
@@ -170,12 +203,24 @@ public static class CadProjectCodec
                 "HATCH" => new HatchEntity(Points(e.GetProperty("boundary")), N(e, "spacing"), N(e, "angle"), e.GetProperty("solid").GetBoolean()),
                 "MESH" => new MeshEntity(Points(e.GetProperty("vertices")), e.GetProperty("triangles").EnumerateArray().Select(i => i.GetInt32()).ToImmutableArray(), S(e, "operation")),
                 "INSERT" => new BlockReferenceEntity(S(e, "name"), P(e, "point"), P(e, "scale"), N(e, "rotation")),
+                "POLYLINE" => new Polyline3DEntity(Points(e.GetProperty("points")), e.GetProperty("closed").GetBoolean()),
+                "SPLINE" => new SplineEntity(e.GetProperty("degree").GetInt32(), Points(e.GetProperty("controls")), Numbers(e, "knots"), Numbers(e, "weights"), e.GetProperty("closed").GetBoolean(), e.GetProperty("periodic").GetBoolean()),
+                "PLACED" => new PlacedEntity(ReadEntities(e.GetProperty("geometry")).Single(), Matrix(e.GetProperty("matrix"))),
+                "COMPOSITE" => new CompositeEntity(S(e, "dxfType"), ReadEntities(e.GetProperty("children")), S(e, "source")),
+                "HATCH_REGION" => new HatchRegionEntity(e.GetProperty("loops").EnumerateArray().Select(l => l.EnumerateArray().Select(v => new PolyVertex(P(v, "point"), N(v, "bulge"))).ToImmutableArray()).ToImmutableArray(), e.GetProperty("solid").GetBoolean(), e.GetProperty("pattern").EnumerateArray().Select(l => new HatchPatternLine(N(l, "angle"), P(l, "origin"), P(l, "offset"), Numbers(l, "dashes"))).ToImmutableArray(), S(e, "patternName"), e.GetProperty("sampled").GetBoolean()) { IslandStyle = e.TryGetProperty("islandStyle", out var style) ? style.GetInt32() : 0 },
                 "OPAQUE" => new OpaqueEntity(S(e, "dxfType"), S(e, "raw")),
                 _ => throw new FormatException($"Unknown native entity type: {type}")
             };
-            return entity with { Id = e.GetProperty("id").GetGuid(), Handle = S(e, "handle"), Layer = S(e, "layer"), ColorIndex = e.GetProperty("aci").GetInt32(), LineWeight = N(e, "weight"), TrueColor = e.TryGetProperty("color", out var c) ? c.GetUInt32() : null };
+            return entity with { Id = e.GetProperty("id").GetGuid(), Handle = S(e, "handle"), Layer = S(e, "layer"), ColorIndex = e.GetProperty("aci").GetInt32(), LineWeight = N(e, "weight"), Visible = !e.TryGetProperty("visible", out var visible) || visible.GetBoolean(), Layout = e.TryGetProperty("layout", out var layout) ? layout.GetString() ?? "Model" : "Model", TrueColor = e.TryGetProperty("color", out var c) ? c.GetUInt32() : null };
         }).ToImmutableArray();
     }
+    private static Transform3 Matrix(JsonElement e)
+    {
+        var columns = Points(e); if (columns.Length != 4) throw new FormatException("Expected four affine matrix columns.");
+        return new(columns[0], columns[1], columns[2], columns[3]);
+    }
+    private static void Numbers(Utf8JsonWriter w, string name, IEnumerable<double> values) { w.WritePropertyName(name); w.WriteStartArray(); foreach (var value in values) w.WriteNumberValue(value); w.WriteEndArray(); }
+    private static ImmutableArray<double> Numbers(JsonElement e, string name) => e.GetProperty(name).EnumerateArray().Select(v => v.GetDouble()).ToImmutableArray();
     private static string S(JsonElement e, string key) => e.GetProperty(key).GetString() ?? throw new FormatException($"Missing string: {key}");
     private static double N(JsonElement e, string key) { var value = e.GetProperty(key).GetDouble(); return double.IsFinite(value) ? value : throw new FormatException("Nonfinite value."); }
     private static Vec3 P(JsonElement e, string key) => P(e.GetProperty(key));

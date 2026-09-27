@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 
 namespace CadSpace.App;
 
@@ -56,8 +57,9 @@ public sealed partial class App : Application
                 case "OPEN": await OpenFile(); break;
                 case "SAVE": await SaveProject(); break;
                 case "EXPORT": await ExportDxf(); break;
+                case "EXPORT_BINARY": await ExportDxf(true); break;
                 case "ABOUT":
-                    await Dialog("CadSpace 0.1", "Independent CAD software built with Uno Platform 6.7, Skia and OpenGL/WebGL.\n\nThe workspace supports editable 2D geometry, layers, blocks, dimensions, hatching and triangle-mesh modeling. Type HELP for available commands.\n\nSave writes a .cadspace project, retaining all implemented editing semantics and imported DXF provenance. Export DXF writes an interchange copy and reports conversion losses.\n\nThis release is not a complete AutoCAD replacement. ACIS/B-rep solids, Boolean modeling, DWG, dynamic blocks, constraints and paper-space plotting are not implemented. Keep backups of original files.\n\nMIT licensed • github.com/wieslawsoltes/CadSpace"); break;
+                    await Dialog("CadSpace preview", "Independent CAD software built with Uno Platform, Skia and OpenGL/WebGL.\n\nThe workspace supports drafting, layers, blocks, rational splines, hatching, triangle meshes and bounded mesh Boolean operations. The 3D viewport includes picking, visual styles, world-plane text and section clipping. Type HELP for commands.\n\nOpen accepts ASCII and binary DXF. Save writes a native .cadspace project including DXF provenance; DXF export reports conversion losses.\n\nThis is not a complete AutoCAD replacement. ACIS/B-rep solids, DWG, dynamic block editing, constraints and paper-space plotting are not implemented. Keep backups of original files.\n\nMIT licensed • github.com/wieslawsoltes/CadSpace"); break;
             }
         }
         catch (Exception error) { _workspace.CommandLine.AddMessage(error.Message); await Dialog("Operation could not be completed", error.Message); }
@@ -71,17 +73,18 @@ public sealed partial class App : Application
         var native = file.Name.EndsWith(".cadspace", StringComparison.OrdinalIgnoreCase);
         var properties = await file.GetBasicPropertiesAsync();
         if (properties.Size > (ulong)(native ? CadProjectCodec.MaximumCharacters : DxfCodec.MaximumCharacters)) throw new InvalidOperationException("The file exceeds the configured import size limit.");
-        var text = await FileIO.ReadTextAsync(file);
         if (native)
         {
-            var project = CadProjectCodec.Read(text); Open(project.Drawing, project.DxfSource, displayName: file.Name);
+            var project = CadProjectCodec.Read(await FileIO.ReadTextAsync(file)); Open(project.Drawing, project.DxfSource, displayName: file.Name);
             _workspace!.CommandLine.AddMessage($"Opened native project {file.Name}. Geometry and DXF provenance restored.");
         }
         else
         {
-            var read = DxfCodec.Read(text, file.Name); Open(read.Drawing, read.Source);
+            var buffer = await FileIO.ReadBufferAsync(file); using var reader = DataReader.FromBuffer(buffer);
+            var bytes = new byte[checked((int)buffer.Length)]; reader.ReadBytes(bytes);
+            var read = DxfBinary.Read(bytes, file.Name); Open(read.Drawing, read.Source);
             if (!read.Warnings.IsEmpty) await Dialog("DXF import report", string.Join("\n\n", read.Warnings));
-            _workspace!.CommandLine.AddMessage($"Opened {file.Name}: {read.Drawing.Entities.Length} model-space records.");
+            _workspace!.CommandLine.AddMessage($"Opened {file.Name}: {read.Drawing.Entities.Length} drawing records.");
         }
     }
     private async Task SaveProject()
@@ -96,19 +99,19 @@ public sealed partial class App : Application
         if (document.Session.Document.Drawing == drawing) document.Session.Document.MarkSaved();
         RefreshTabs(); _workspace!.CommandLine.AddMessage($"Saved {file.Name}. Editable geometry, layers, blocks, and DXF provenance retained.");
     }
-    private async Task ExportDxf()
+    private async Task ExportDxf(bool binary = false)
     {
         if (_active == null) return;
-        var document = _active; var drawing = document.Session.Document.Drawing; var result = DxfCodec.Write(drawing, document.Source);
+        var document = _active; var drawing = document.Session.Document.Drawing; var result = DxfBinary.Write(drawing, document.Source, binary);
         if (!result.Warnings.IsEmpty)
         {
             var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Review DXF export", Content = new ScrollViewer { MaxHeight = 360, Content = new TextBlock { Text = string.Join("\n\n", result.Warnings) + "\n\nExport a copy and keep your original file. Use Save for a lossless native project.", TextWrapping = TextWrapping.Wrap } }, PrimaryButtonText = "Export copy", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         }
         var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = Path.GetFileNameWithoutExtension(document.DisplayName) + (result.Warnings.IsEmpty ? "" : "-export") };
-        picker.FileTypeChoices.Add("ASCII DXF drawing", new List<string> { ".dxf" });
+        picker.FileTypeChoices.Add(binary ? "Binary DXF drawing" : "ASCII DXF drawing", new List<string> { ".dxf" });
         var file = await picker.PickSaveFileAsync(); if (file == null) return;
-        await FileIO.WriteTextAsync(file, result.Text);
+        await FileIO.WriteBytesAsync(file, result.Bytes);
         _workspace!.CommandLine.AddMessage($"Exported {file.Name}." + (result.Warnings.IsEmpty ? "" : " Use Save to retain native editing semantics."));
     }
     private async Task Close(OpenDrawing document)

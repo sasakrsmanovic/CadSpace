@@ -31,7 +31,7 @@ public sealed class CadRibbon : UserControl
             case "Modify": Group("Transform", "MOVE", "COPY", "ROTATE", "SCALE", "MIRROR"); Group("Line editing", "TRIM", "EXTEND", "FILLET", "CHAMFER", "BREAK", "JOIN"); Group("Patterns", "OFFSET", "ARRAY"); Group("Decompose", "EXPLODE", "ERASE"); break;
             case "Insert": Group("Block definitions", "BLOCK", "INSERT", "EXPLODE"); Group("Pattern", "ARRAY"); Group("Drawing", "POINT", "TEXT"); break;
             case "Annotate": Group("Text and dimensions", "TEXT", "DIMALIGNED"); Group("Fill", "HATCH"); Group("Inquiry", "DIST", "AREA"); break;
-            case "3D Modeling": Group("Mesh primitives", "BOX", "CYLINDER", "SPHERE", "CONE"); Group("Mesh surfaces", "EXTRUDE", "REVOLVE"); Group("Modify", "MOVE", "COPY", "ROTATE", "SCALE"); Group("View", "3DORBIT", "TOP", "ZOOM"); break;
+            case "3D Modeling": Group("Mesh primitives", "BOX", "CYLINDER", "SPHERE", "CONE"); Group("Mesh surfaces", "EXTRUDE", "REVOLVE"); Group("Mesh Booleans", "UNION", "SUBTRACT", "INTERSECT"); Group("Modify", "MOVE", "COPY", "ROTATE", "SCALE"); Group("View", "3DORBIT", "TOP", "ZOOM"); break;
             case "View": Group("Viewport", "TOP", "3DORBIT", "ZOOM"); Group("Selection", "SELECTALL"); Group("History", "UNDO", "REDO"); Group("Command reference", "HELP"); break;
         }
     }

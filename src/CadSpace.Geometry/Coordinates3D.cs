@@ -44,3 +44,10 @@ public static class Coordinates3D
         return new(x, z.Cross(x).Normalized, z, origin);
     }
 }
+
+/// <summary>Half-space retaining points with Normal.Dot(point) + Offset &lt;= 0.</summary>
+public readonly record struct Plane3(Vec3 Normal, double Offset)
+{
+    public double SignedDistance(Vec3 point) => Normal.Dot(point) + Offset;
+    public static Plane3 Through(Vec3 point, Vec3 normal) { var n = normal.Normalized; return new(n, -n.Dot(point)); }
+}

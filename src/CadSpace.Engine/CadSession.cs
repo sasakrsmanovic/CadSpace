@@ -16,10 +16,18 @@ public sealed class CadSession
     public CadSession(CadDocument? document = null)
     {
         Document = document ?? new();
-        Document.Changed += () => { _selection.IntersectWith(Document.Drawing.Entities.Select(e => e.Id)); Changed?.Invoke(); };
+        Document.Changed += () => { _selection.IntersectWith(Document.Drawing.Entities.Where(IsVisible).Select(e => e.Id)); Changed?.Invoke(); };
     }
     public CadDocument Document { get; }
     public IReadOnlySet<Guid> Selection => _selection;
+    private string _activeLayout = "Model";
+    public string ActiveLayout
+    {
+        get => _activeLayout;
+        set { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A layout name is required."); if (_activeLayout == value) return; _activeLayout = value; _scene = null; _selection.Clear(); Changed?.Invoke(); }
+    }
+    public IEnumerable<string> AvailableLayouts => Document.Drawing.LayoutBlockNames.Keys.Concat(Document.Drawing.Entities.Select(e => e.Layout)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n == "Model" ? 0 : 1).ThenBy(n => n);
+    public bool IsVisible(Entity entity) => entity.Visible && entity.Layout.Equals(ActiveLayout, StringComparison.OrdinalIgnoreCase) && Document.Drawing.LayerFor(entity).Visible;
     public string CurrentLayer { get; set; } = "0";
     public bool GridVisible { get; set; } = true;
     public bool GridSnap { get; set; }
@@ -30,16 +38,16 @@ public sealed class CadSession
     public event Action? Changed;
     public DrawingScene Scene
     {
-        get { if (_scene == null || _sceneRevision != Document.Revision) { _scene = EntityGeometry.BuildScene(Document.Drawing); _sceneRevision = Document.Revision; } return _scene; }
+        get { if (_scene == null || _sceneRevision != Document.Revision) { _scene = EntityGeometry.BuildScene(Document.Drawing, ActiveLayout); _sceneRevision = Document.Revision; } return _scene; }
     }
     public void Invalidate() => Changed?.Invoke();
     public void Select(Guid? id, bool additive = false)
     {
         if (!additive) _selection.Clear();
-        if (id is Guid value && Document.Drawing.Entities.Any(e => e.Id == value)) { if (additive && !_selection.Add(value)) _selection.Remove(value); else _selection.Add(value); }
+        if (id is Guid value && Document.Drawing.Entities.Any(e => e.Id == value && IsVisible(e))) { if (additive && !_selection.Add(value)) _selection.Remove(value); else _selection.Add(value); }
         Changed?.Invoke();
     }
-    public void SelectAll() { _selection.UnionWith(Document.Drawing.Entities.Where(e => Document.Drawing.LayerFor(e).Visible).Select(e => e.Id)); Changed?.Invoke(); }
+    public void SelectAll() { _selection.UnionWith(Document.Drawing.Entities.Where(IsVisible).Select(e => e.Id)); Changed?.Invoke(); }
     public void SelectWindow(Vec3 a, Vec3 b, bool crossing, bool additive = false)
     {
         if (!additive) _selection.Clear();
@@ -70,14 +78,18 @@ public sealed class CadSession
             if (path.Filled && GeometryMath.PointInPolygon(point, path.Points)) { nearest = path.EntityId; distance = 0; }
             for (var i = 0; i < path.Points.Length; i++)
             {
-                var candidate = i + 1 < path.Points.Length || path.Closed ? GeometryMath.NearestOnSegment(point, path.Points[i], path.Points[(i + 1) % path.Points.Length]) : path.Points[i];
+                var a = path.Points[i] with { Z = point.Z }; var b = path.Points[(i + 1) % path.Points.Length] with { Z = point.Z };
+                var candidate = i + 1 < path.Points.Length || path.Closed ? GeometryMath.NearestOnSegment(point, a, b) : a;
                 var d = candidate.DistanceTo(point); if (d <= distance) { distance = d; nearest = path.EntityId; }
             }
         }
         foreach (var text in Scene.Texts)
         {
-            var p = Transform3.RotationZ(-text.Rotation, text.Position).Point(point);
-            if (p.X >= text.Position.X && p.X <= text.Position.X + Math.Max(1, text.Text.Length) * text.Height * 0.65 && p.Y >= text.Position.Y - text.Height * 0.3 && p.Y <= text.Position.Y + text.Height) nearest = text.EntityId;
+            var delta = point - text.Position; var det = GeometryMath.Cross2(text.AxisX, text.AxisY);
+            if (Math.Abs(det) < 1e-12) continue;
+            var x = GeometryMath.Cross2(delta, text.AxisY) / det; var y = GeometryMath.Cross2(text.AxisX, delta) / det;
+            var lines = text.Text.Split('\n');
+            if (x >= 0 && x <= Math.Max(1, lines.Max(l => l.Length)) * text.Height * .65 && y >= -text.Height * (.3 + (lines.Length - 1) * 1.3) && y <= text.Height) nearest = text.EntityId;
         }
         return nearest;
     }
@@ -90,7 +102,7 @@ public sealed class CadSession
         }
         if (ObjectSnap)
         {
-            foreach (var entity in Document.Drawing.Entities.Where(e => Document.Drawing.LayerFor(e).Visible))
+            foreach (var entity in Document.Drawing.Entities.Where(IsVisible))
             {
                 switch (entity)
                 {
@@ -129,7 +141,7 @@ public sealed class CadSession
     {
         if (!Document.Drawing.Layers.TryGetValue(CurrentLayer, out var layer)) CurrentLayer = "0";
         else if (layer.Locked) throw new InvalidOperationException("The current layer is locked.");
-        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer }).ToArray());
+        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer, Layout = ActiveLayout }).ToArray());
     }
     public void TransformSelection(string name, Transform3 transform, bool copy = false)
     {
@@ -147,7 +159,7 @@ public sealed class CadSession
         if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(['\r', '\n', '*', '/', '\\', ':']) >= 0) throw new ArgumentException("Enter a valid block name.");
         if (Document.Drawing.Blocks.ContainsKey(name)) throw new ArgumentException("That block name already exists.");
         var ids = selected.Select(e => e.Id).ToHashSet();
-        Document.Edit("Block", s => s with { Blocks = s.Blocks.Add(name, new(name, basePoint, selected.ToImmutableArray())), Entities = s.Entities.Where(e => !ids.Contains(e.Id)).Append(new BlockReferenceEntity(name, basePoint, new(1, 1, 1)) { Layer = CurrentLayer }).ToImmutableArray() });
+        Document.Edit("Block", s => s with { Blocks = s.Blocks.Add(name, new(name, basePoint, selected.ToImmutableArray())), Entities = s.Entities.Where(e => !ids.Contains(e.Id)).Append(new BlockReferenceEntity(name, basePoint, new(1, 1, 1)) { Layer = CurrentLayer, Layout = ActiveLayout }).ToImmutableArray() });
     }
     public void Explode()
     {
@@ -161,12 +173,12 @@ public sealed class CadSession
                     {
                         var a = poly.Vertices[i]; var b = poly.Vertices[(i + 1) % poly.Vertices.Length];
                         if (Math.Abs(a.Bulge) > 1e-9) throw new NotSupportedException("Exploding bulged polylines is not yet supported.");
-                        result.Add(new LineEntity(a.Position, b.Position) { Layer = poly.Layer, TrueColor = poly.TrueColor, ColorIndex = poly.ColorIndex });
+                        result.Add(new LineEntity(a.Position, b.Position) { Layer = poly.Layer, TrueColor = poly.TrueColor, ColorIndex = poly.ColorIndex, Layout = poly.Layout });
                     }
                     break;
                 case BlockReferenceEntity insert when Document.Drawing.Blocks.TryGetValue(insert.Name, out var block):
                     var transform = Transform3.Translation(-block.BasePoint).Then(Transform3.Scaling(insert.Scale)).Then(Transform3.RotationZ(insert.Rotation)).Then(Transform3.Translation(insert.Position));
-                    foreach (var child in block.Entities) result.Add(EntityGeometry.Transform(child, transform, true) with { Layer = child.Layer == "0" ? insert.Layer : child.Layer });
+                    foreach (var child in block.Entities) result.Add(EntityGeometry.Transform(child, transform, true) with { Layer = child.Layer == "0" ? insert.Layer : child.Layer, Layout = insert.Layout });
                     break;
                 default: throw new NotSupportedException($"Explode is not implemented for {entity.Kind}.");
             }
@@ -186,12 +198,27 @@ public sealed class CadSession
         }).ToArray();
         Document.Add("Offset", copies);
     }
+    public void BooleanSelection(MeshBooleanOperation operation)
+    {
+        var selected = EditableSelection();
+        if (selected.Length < 2 || selected.Any(e => e is not MeshEntity)) throw new ArgumentException("Select at least two closed meshes. Subtract uses the first mesh in drawing order as its base.");
+        var result = (MeshEntity)selected[0];
+        foreach (var operand in selected.Skip(1).Cast<MeshEntity>())
+        {
+            if (result.Triangles.IsEmpty && operation != MeshBooleanOperation.Union) break;
+            result = MeshBoolean.Apply(result, operand, operation);
+        }
+        result = result with { Layer = selected[0].Layer, Layout = selected[0].Layout, TrueColor = selected[0].TrueColor, ColorIndex = selected[0].ColorIndex, LineWeight = selected[0].LineWeight };
+        var ids = selected.Select(e => e.Id).ToHashSet();
+        Document.Edit("Mesh " + operation, d => d with { Entities = d.Entities.Where(e => !ids.Contains(e.Id)).Concat(result.Triangles.IsEmpty ? Array.Empty<Entity>() : new Entity[] { result }).ToImmutableArray() });
+        Select(result.Triangles.IsEmpty ? null : result.Id);
+    }
     public void Extrude(double height)
     {
         var meshes = EditableSelection().Select(e => e switch
         {
-            PolylineEntity { Closed: true } p => MeshFactory.Extrude(EntityGeometry.PolylinePoints(p), height) with { Layer = p.Layer, TrueColor = p.TrueColor },
-            CircleEntity c => MeshFactory.Cylinder(c.Center, c.Radius, height) with { Layer = c.Layer, TrueColor = c.TrueColor },
+            PolylineEntity { Closed: true } p => MeshFactory.Extrude(EntityGeometry.PolylinePoints(p), height) with { Layer = p.Layer, TrueColor = p.TrueColor, Layout = p.Layout },
+            CircleEntity c => MeshFactory.Cylinder(c.Center, c.Radius, height) with { Layer = c.Layer, TrueColor = c.TrueColor, Layout = c.Layout },
             _ => throw new NotSupportedException("Extrude requires closed XY polylines or circles.")
         }).ToArray();
         Document.Add("Extrude", meshes);

@@ -49,7 +49,9 @@ public sealed class SkiaDraftRenderer : IDisposable
             if (height < 2 || height > 10000) continue;
             _font.Size = (float)height;
             _fill.Color = preview ? new SKColor(151, 208, 252) : selected.Contains(label.EntityId) ? new SKColor(86, 172, 255) : Color(label.Color);
-            canvas.Save(); canvas.Translate(point.X, point.Y); canvas.RotateDegrees((float)-label.Rotation);
+            canvas.Save();
+            var textMatrix = new SKMatrix((float)label.AxisX.X, (float)-label.AxisY.X, point.X, (float)-label.AxisX.Y, (float)label.AxisY.Y, point.Y, 0, 0, 1);
+            canvas.Concat(in textMatrix);
             var lines = label.Text.Split('\n');
             for (var i = 0; i < lines.Length; i++) canvas.DrawText(lines[i], 0, (float)(i * height * 1.3), _font, _fill);
             canvas.Restore();

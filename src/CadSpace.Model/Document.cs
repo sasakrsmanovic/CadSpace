@@ -32,6 +32,7 @@ public sealed class CadDocument
     public static void ValidateEntity(Entity entity, Drawing drawing, int depth = 0)
     {
         if (depth > 32) throw new ArgumentException("Geometry nesting exceeds 32 levels.");
+        if (string.IsNullOrWhiteSpace(entity.Layout) || entity.Layout.IndexOfAny(['\0', '\n', '\r']) >= 0) throw new ArgumentException("Invalid entity layout name.");
         if (!drawing.Layers.ContainsKey(entity.Layer)) throw new ArgumentException($"Missing layer: {entity.Layer}");
         if (EntityGeometry.Anchors(entity).Any(p => !p.IsFinite)) throw new ArgumentException("Coordinates must be finite.");
         if (!double.IsFinite(entity.LineWeight)) throw new ArgumentException("Nonfinite line weight.");
@@ -49,6 +50,7 @@ public sealed class CadDocument
     }
     public static void Validate(Drawing drawing)
     {
+        if (drawing.LayoutBlockNames.Any(p => string.IsNullOrWhiteSpace(p.Key) || string.IsNullOrWhiteSpace(p.Value) || p.Key.IndexOfAny(['\0', '\r', '\n']) >= 0 || p.Value.IndexOfAny(['\0', '\r', '\n']) >= 0) || drawing.LayoutBlockNames.Values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != drawing.LayoutBlockNames.Count) throw new ArgumentException("Invalid layout/block mapping.");
         if (!drawing.Layers.ContainsKey("0")) throw new ArgumentException("Layer 0 is required.");
         if (drawing.Entities.Length > 1000000 || drawing.Entities.Select(e => e.Id).Distinct().Count() != drawing.Entities.Length) throw new ArgumentException("Too many entities or duplicate entity IDs.");
         foreach (var layer in drawing.Layers.Values)
