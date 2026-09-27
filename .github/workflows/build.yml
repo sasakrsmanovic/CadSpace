@@ -80,14 +80,27 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Install WebAssembly workload
         run: dotnet workload install wasm-tools --skip-manifest-update
-      - name: Publish browser application
-        run: dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm -p:WasmShellWebAppBasePath=/CadSpace/
       - name: Pack reusable Uno controls
-        run: dotnet pack src/CadSpace.Controls -c Release -o artifacts/control-packages
+        run: |
+          mkdir -p artifacts/control-packages
+          dotnet pack src/CadSpace.Controls -c Release -o artifacts/control-packages 2>&1 | tee artifacts/control-packages/pack.log
+          find artifacts/control-packages -type f -print
+          test -f artifacts/control-packages/CadSpace.Controls.0.1.0.nupkg
+          python - <<'PYVERIFY'
+          import zipfile
+          with zipfile.ZipFile('artifacts/control-packages/CadSpace.Controls.0.1.0.nupkg') as package:
+              print('\n'.join(package.namelist()), flush=True)
+              for target in ('net10.0-desktop1.0', 'net10.0-browserwasm1.0'):
+                  assert f'lib/{target}/CadSpace.Controls.dll' in package.namelist(), target
+          PYVERIFY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: cadspace-controls
           path: artifacts/control-packages
+          if-no-files-found: error
+      - name: Publish browser application
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm -p:WasmShellWebAppBasePath=/CadSpace/
       - name: Prepare site
         shell: bash
         run: |
