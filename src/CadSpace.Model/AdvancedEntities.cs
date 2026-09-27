@@ -78,8 +78,14 @@ public static class AdvancedGeometry
         if (s.Knots[s.Degree] >= s.Knots[s.ControlPoints.Length]) throw new ArgumentException("The spline parameter domain is empty.");
         if (!s.Weights.IsEmpty && (s.Weights.Length != s.ControlPoints.Length || s.Weights.Any(w => !double.IsFinite(w) || w <= 0))) throw new ArgumentException("Spline weights must be positive and match the control points.");
     }
-    /// <summary>Homogeneous de Boor evaluation. No float conversion occurs in the geometry kernel.</summary>
+    /// <summary>Validated homogeneous de Boor evaluation in double precision.</summary>
     public static Vec3 Evaluate(SplineEntity s, double parameter)
+    {
+        ValidateSpline(s);
+        if (!double.IsFinite(parameter)) throw new ArgumentOutOfRangeException(nameof(parameter));
+        return EvaluateValidated(s, parameter);
+    }
+    private static Vec3 EvaluateValidated(SplineEntity s, double parameter)
     {
         var n = s.ControlPoints.Length - 1; var p = s.Degree;
         var t = Math.Clamp(parameter, s.Knots[p], s.Knots[n + 1]);
@@ -104,19 +110,20 @@ public static class AdvancedGeometry
     public static ImmutableArray<Vec3> Tessellate(SplineEntity spline, double relativeTolerance = 1e-5)
     {
         ValidateSpline(spline);
+        if (!double.IsFinite(relativeTolerance) || relativeTolerance <= 0) throw new ArgumentOutOfRangeException(nameof(relativeTolerance));
         var tolerance = Math.Max(1e-8, Bounds3.From(spline.ControlPoints).Size.Length * relativeTolerance);
         var result = ImmutableArray.CreateBuilder<Vec3>();
         void Segment(double a, Vec3 pa, double b, Vec3 pb, int depth)
         {
-            var middle = (a + b) / 2; var pm = Evaluate(spline, middle);
-            var q1 = Evaluate(spline, a * .75 + b * .25); var q3 = Evaluate(spline, a * .25 + b * .75);
+            var middle = (a + b) / 2; var pm = EvaluateValidated(spline, middle);
+            var q1 = EvaluateValidated(spline, a * .75 + b * .25); var q3 = EvaluateValidated(spline, a * .25 + b * .75);
             var error = Math.Max(pm.DistanceTo(GeometryMath.NearestOnSegment(pm, pa, pb)), Math.Max(q1.DistanceTo(GeometryMath.NearestOnSegment(q1, pa, pb)), q3.DistanceTo(GeometryMath.NearestOnSegment(q3, pa, pb))));
             if (error > tolerance && depth < 14) { Segment(a, pa, middle, pm, depth + 1); Segment(middle, pm, b, pb, depth + 1); }
             else { if (result.Count >= MaximumCurvePoints) throw new ArgumentException("Spline tessellation exceeds the point budget."); result.Add(pb); }
         }
-        var start = spline.Knots[spline.Degree]; result.Add(Evaluate(spline, start));
+        var start = spline.Knots[spline.Degree]; result.Add(EvaluateValidated(spline, start));
         for (var i = spline.Degree; i < spline.ControlPoints.Length; i++)
-            if (spline.Knots[i + 1] > spline.Knots[i]) Segment(spline.Knots[i], Evaluate(spline, spline.Knots[i]), spline.Knots[i + 1], Evaluate(spline, spline.Knots[i + 1]), 0);
+            if (spline.Knots[i + 1] > spline.Knots[i]) Segment(spline.Knots[i], EvaluateValidated(spline, spline.Knots[i]), spline.Knots[i + 1], EvaluateValidated(spline, spline.Knots[i + 1]), 0);
         return result.ToImmutable();
     }
     public static ImmutableArray<ImmutableArray<Vec3>> HatchLoops(HatchRegionEntity hatch) => hatch.Loops.Select(l => EntityGeometry.PolylinePoints(new PolylineEntity(l, true))).ToImmutableArray();
@@ -131,7 +138,6 @@ public static class AdvancedGeometry
                 var loops = HatchLoops(h);
                 if (h.Solid)
                 {
-                    // Scan bands tessellate odd-even loops including nested islands, without bridge edges.
                     foreach (var face in PolygonBands.Fill(loops)) yield return face;
                 }
                 else foreach (var line in PatternSegments(loops, h.Pattern)) yield return line;
@@ -213,9 +219,9 @@ public static class PolygonBands
             for (var j = 0; j < active.Length; j += 2)
             {
                 var a = new Vec3(active[j].At(y0), y0, z); var b = new Vec3(active[j + 1].At(y0), y0, z); var c = new Vec3(active[j + 1].At(y1), y1, z); var d = new Vec3(active[j].At(y1), y1, z);
-                var n = vertices.Count; vertices.AddRange([a, b, c, d]);
-                if ((b - a).Cross(c - a).Length > 1e-12) triangles.AddRange([n, n + 1, n + 2]);
-                if ((c - a).Cross(d - a).Length > 1e-12) triangles.AddRange([n, n + 2, n + 3]);
+                var n = vertices.Count; vertices.AddRange(new Vec3[] { a, b, c, d });
+                if ((b - a).Cross(c - a).Length > 1e-12) triangles.AddRange(new int[] { n, n + 1, n + 2 });
+                if ((c - a).Cross(d - a).Length > 1e-12) triangles.AddRange(new int[] { n, n + 2, n + 3 });
             }
         }
         yield return new MeshEntity(vertices.ToImmutable(), triangles.ToImmutable(), "Hatch fill");
