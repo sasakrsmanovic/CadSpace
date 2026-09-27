@@ -17,11 +17,18 @@ public sealed partial class App
         if (_recoveryStarted) return; _recoveryStarted = true;
         try
         {
-            var folder = await ApplicationData.Current.LocalFolder.CreateFolderAsync("CadSpaceRecovery", CreationCollisionOption.OpenIfExists);
-            _recovery = new(new LocalRecoveryStorage(folder));
+            IRecoveryStorage storage;
+            if (OperatingSystem.IsBrowser()) storage = new BrowserRecoveryStorage();
+            else
+            {
+                var folder = await ApplicationData.Current.LocalFolder.CreateFolderAsync("CadSpaceRecovery", CreationCollisionOption.OpenIfExists);
+                storage = new LocalRecoveryStorage(folder);
+            }
+            _recovery = new(storage);
             var found = await _recovery.ReadAsync();
             if (found.Snapshots.Length > 0) _workspace?.CommandLine.AddMessage($"Recovery: {found.Snapshots.Length} unsaved drawing(s) available. Choose Recover to restore them.");
             foreach (var warning in found.Warnings) _workspace?.CommandLine.AddMessage(warning);
+            Console.WriteLine($"CADSPACE_RECOVERY: ready backend={(OperatingSystem.IsBrowser() ? "IndexedDB" : "LocalFolder")} snapshots={found.Snapshots.Length}");
             _recoveryTimer.Tick += async (_, _) => await CheckpointDrawings(); _recoveryTimer.Start();
         }
         catch (Exception error) { _workspace?.CommandLine.AddMessage("Automatic recovery is unavailable: " + error.Message); }
