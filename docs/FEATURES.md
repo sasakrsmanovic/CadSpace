@@ -1,6 +1,6 @@
 # Feature coverage and qualification
 
-This document describes implemented behavior, not an assertion of AutoCAD parity. A command appearing in the ribbon has a working implementation; unsupported command names report an error rather than pretending to execute.
+This document describes implemented behavior, not an assertion of AutoCAD parity. A command appearing in the ribbon has a working implementation; unsupported command names report an error rather than pretending to execute. See [commands](COMMANDS.md) and [line editing](LINE-EDITING.md) for exact workflows.
 
 ## Drafting and editing
 
@@ -8,19 +8,20 @@ This document describes implemented behavior, not an assertion of AutoCAD parity
 | --- | --- |
 | Lines, points, circles, arcs | Editable. ARC accepts three points in the XY drawing plane. |
 | Polylines and rectangles | Editable; DXF bulges are retained and tessellated. UI creates straight segments. |
-| Ellipses | Model/render/DXF/native persistence support; no dedicated creation command or general transform editor yet. |
+| Ellipses | Analytic creation from center/major axis/minor radius; rendering, DXF and native persistence. General ellipse transform/property editing is not complete. |
 | Text | Plain text and basic multiline display. No full MTEXT grammar, SHX font engine, shaping qualification, fields, or style inheritance. |
 | Dimensions | Nonassociative aligned dimensions with fixed display sizing. DXF export currently explodes display geometry. |
 | Hatching | A single closed polyline boundary, generated line pattern or model-level solid fill. No nested islands, arbitrary PAT definitions, gradient editor, or associativity. |
 | Selection | Click, window, crossing, additive/toggle selection. 3D viewport is orbit-only; select mesh wireframes from Top view. |
 | Snapping | Endpoint, midpoint, center, quadrant and nearest; grid, ortho and 45-degree polar guidance. No complete intersection/tangent/perpendicular/extension snap engine. |
 | Modify | Move, copy, rotate, uniform scale, XY mirror, erase, rectangular arrays. |
+| Line editing | Atomic TRIM, EXTEND, FILLET, CHAMFER, JOIN and BREAK for the documented coplanar-line workflows. Curved boundaries, polyline fillets and full option parity are not implemented. |
 | Offset | Lines, circles and arcs only; signed numeric offset, not a complete side-picking offset workflow. |
 | Explode | Straight polylines and supported block children. Bulged polyline explode, arbitrary affine block decomposition, and unsupported children are rejected atomically. |
 | Blocks | Definitions, base points, nested inserts, transforms, layer-0/by-block inheritance and insertion. No attributes, dynamic parameters/actions, constraints, block editor, or xref management. |
 | Layers | Current layer, color, visibility and locking. No complete linetype engine, per-viewport overrides, layer filters/states, or exhaustive ACI palette. |
 | Undo/redo | Immutable document transactions, bounded to 256 undo entries. Selection/view changes are not document transactions. |
-| Advanced 2D tools | Trim, extend, fillet, chamfer, stretch, spline editing, region Boolean operations, constraints, and comprehensive grips are not implemented. |
+| Remaining advanced 2D | Stretch, spline editing, region Boolean operations, constraints, comprehensive grips and many command options are not implemented. |
 
 ## Three-dimensional modeling
 

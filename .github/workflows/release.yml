@@ -30,6 +30,7 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - run: dotnet run --project tests/CadSpace.Tests -c Release
       - run: dotnet run --project tests/CadSpace.Exchange.Tests -c Release
+      - run: dotnet run --project tests/CadSpace.Persistence.Tests -c Release
   desktop:
     needs: verify
     strategy:
@@ -48,16 +49,21 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet workload install wasm-tools --skip-manifest-update
       - name: Publish desktop
-        run: dotnet publish src/CadSpace.App -c Release -f net10.0-desktop -r ${{ matrix.rid }} --self-contained true -p:Version=${{ needs.verify.outputs.version }} -o artifacts/desktop
-      - name: Archive
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-desktop -p:TargetFrameworks=net10.0-desktop -r ${{ matrix.rid }} --self-contained true -p:Version=${{ needs.verify.outputs.version }} -o artifacts/desktop
+      - name: Archive Windows
+        if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path artifacts/desktop/* -DestinationPath artifacts/CadSpace-${{ needs.verify.outputs.version }}-${{ matrix.rid }}.zip
+      - name: Archive Unix with executable permissions
+        if: runner.os != 'Windows'
+        run: tar -czf artifacts/CadSpace-${{ needs.verify.outputs.version }}-${{ matrix.rid }}.tar.gz -C artifacts/desktop .
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.rid }}
-          path: artifacts/*.zip
+          path: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
   packages-and-browser:
     needs: verify
     runs-on: ubuntu-latest
@@ -86,7 +92,6 @@ jobs:
           OUT="$PWD/artifacts/CadSpace-$VERSION-browser.zip"
           (cd "$(dirname "$INDEX")" && zip -qr "$OUT" .)
           git archive --format=zip HEAD -o "artifacts/CadSpace-$VERSION-source.zip"
-          (cd artifacts && sha256sum *.zip packages/*.nupkg > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
           name: release-packages-browser-source
@@ -102,6 +107,10 @@ jobs:
           pattern: release-*
           path: artifacts
           merge-multiple: true
+      - name: Hash every release asset
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.nupkg' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,5 +118,5 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
         run: |
-          mapfile -t FILES < <(find artifacts -type f \( -name '*.zip' -o -name '*.nupkg' -o -name 'SHA256SUMS.txt' \))
+          mapfile -t FILES < <(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.nupkg' -o -name 'SHA256SUMS.txt' \))
           gh release create "$TAG" "${FILES[@]}" --repo "$REPOSITORY" --target "$COMMIT" --title "CadSpace $TAG" --generate-notes

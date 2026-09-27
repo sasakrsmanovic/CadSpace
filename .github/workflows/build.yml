@@ -45,10 +45,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Install browser workload for multi-target restore
-        run: dotnet workload install wasm-tools --skip-manifest-update
-      - name: Build desktop application
-        run: dotnet build src/CadSpace.App -c Release -f net10.0-desktop
+      - name: Build desktop application without unrelated browser workload
+        run: dotnet build src/CadSpace.App -c Release -f net10.0-desktop -p:TargetFrameworks=net10.0-desktop
   browser:
     runs-on: ubuntu-latest
     steps:

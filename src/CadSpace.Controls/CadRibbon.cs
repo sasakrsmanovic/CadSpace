@@ -13,7 +13,7 @@ public sealed class CadRibbon : UserControl
     public CadRibbon()
     {
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Background = CadTheme.Brush(CadTheme.Background), Spacing = 1 };
-        foreach (var tab in new[] { "Home", "Insert", "Annotate", "3D Modeling", "View" })
+        foreach (var tab in new[] { "Home", "Modify", "Insert", "Annotate", "3D Modeling", "View" })
         {
             var button = CadTheme.Button(tab, () => Show(tab)); button.MinWidth = 65; _tabs.Add(tab, button); tabs.Children.Add(button);
         }
@@ -27,7 +27,8 @@ public sealed class CadRibbon : UserControl
         _groups.Children.Clear();
         switch (tab)
         {
-            case "Home": Group("Draw", "LINE", "PLINE", "CIRCLE", "ARC", "RECTANG"); Group("Modify", "MOVE", "COPY", "ROTATE", "SCALE", "MIRROR", "OFFSET"); Group("Annotation", "TEXT", "DIMALIGNED"); Group("Block", "BLOCK", "INSERT"); Group("Utilities", "ERASE", "ZOOM"); break;
+            case "Home": Group("Draw", "LINE", "PLINE", "CIRCLE", "ARC", "RECTANG", "ELLIPSE"); Group("Modify", "MOVE", "COPY", "ROTATE", "TRIM", "FILLET", "OFFSET"); Group("Annotation", "TEXT", "DIMALIGNED"); Group("Block", "BLOCK", "INSERT"); Group("Utilities", "ERASE", "ZOOM"); break;
+            case "Modify": Group("Transform", "MOVE", "COPY", "ROTATE", "SCALE", "MIRROR"); Group("Line editing", "TRIM", "EXTEND", "FILLET", "CHAMFER", "BREAK", "JOIN"); Group("Patterns", "OFFSET", "ARRAY"); Group("Decompose", "EXPLODE", "ERASE"); break;
             case "Insert": Group("Block definitions", "BLOCK", "INSERT", "EXPLODE"); Group("Pattern", "ARRAY"); Group("Drawing", "POINT", "TEXT"); break;
             case "Annotate": Group("Text and dimensions", "TEXT", "DIMALIGNED"); Group("Fill", "HATCH"); Group("Inquiry", "DIST", "AREA"); break;
             case "3D Modeling": Group("Mesh primitives", "BOX", "CYLINDER", "SPHERE", "CONE"); Group("Mesh surfaces", "EXTRUDE", "REVOLVE"); Group("Modify", "MOVE", "COPY", "ROTATE", "SCALE"); Group("View", "3DORBIT", "TOP", "ZOOM"); break;

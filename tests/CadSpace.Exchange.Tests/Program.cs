@@ -28,6 +28,7 @@ Test("locked selection cannot be erased", () => { var d = Drawing.Empty; d = d w
 Test("window versus crossing selection", () => { var s = new CadSession(); s.Add("Line", new LineEntity(new(-10, 0), new(10, 0))); s.SelectWindow(new(-1, -1), new(1, 1), false); Check(s.Selection.Count == 0); s.SelectWindow(new(-1, -1), new(1, 1), true); Check(s.Selection.Count == 1); });
 Test("endpoint snapping", () => { var s = new CadSession(); s.Add("Line", new LineEntity(new(2, 3), new(10, 3))); var result = s.Snap(new(2.1, 3.1), 0.5); Check(result.Kind == SnapKind.Endpoint && result.Point == new Vec3(2, 3)); });
 Test("create insert explode block", () => { var s = new CadSession(); s.Add("Line", new LineEntity(new(10, 10), new(20, 10))); s.SelectAll(); s.CreateBlock("B", new(10, 10)); s.SelectAll(); s.Explode(); Check(s.Document.Drawing.Entities[0] is LineEntity l && l.Start == new Vec3(10, 10)); });
+EditingRegression.Register(Test, Check, Near);
 var failures = 0;
 foreach (var (name, run) in tests) try { run(); Console.WriteLine($"PASS {name}"); } catch (Exception error) { failures++; Console.Error.WriteLine($"FAIL {name}: {error}"); }
 Console.WriteLine($"{tests.Count - failures}/{tests.Count} exchange/engine tests passed.");
