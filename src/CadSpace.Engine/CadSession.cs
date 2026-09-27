@@ -4,13 +4,18 @@ using CadSpace.Model;
 
 namespace CadSpace.Engine;
 
-public enum SnapKind { None, Endpoint, Midpoint, Center, Quadrant, Nearest, Grid }
+public enum SnapKind { None, Endpoint, Midpoint, Center, Quadrant, Nearest, Grid, Intersection, Perpendicular, Tangent }
 public readonly record struct SnapResult(Vec3 Point, SnapKind Kind, Guid EntityId = default);
 
 /// <summary>Reusable editing context; all document changes are transactions on CadDocument.</summary>
 public sealed class CadSession
 {
     private DrawingScene? _scene;
+    private readonly DrawingSceneCache _sceneCache = new();
+    private SnapIndex? _snaps;
+    public int RebuiltSceneRoots => _sceneCache.RebuiltRoots;
+    public ObjectSnapModes SnapModes { get; set; } = ObjectSnapModes.Default;
+    public bool DynamicInput { get; set; } = true;
     private long _sceneRevision = -1;
     private readonly HashSet<Guid> _selection = new();
     public CadSession(CadDocument? document = null)
@@ -24,7 +29,7 @@ public sealed class CadSession
     public string ActiveLayout
     {
         get => _activeLayout;
-        set { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A layout name is required."); if (_activeLayout == value) return; _activeLayout = value; _scene = null; _selection.Clear(); Changed?.Invoke(); }
+        set { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A layout name is required."); if (_activeLayout == value) return; _activeLayout = value; _scene = null; _snaps = null; _selection.Clear(); Changed?.Invoke(); }
     }
     public IEnumerable<string> AvailableLayouts => Document.Drawing.LayoutBlockNames.Keys.Concat(Document.Drawing.Entities.Select(e => e.Layout)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n == "Model" ? 0 : 1).ThenBy(n => n);
     public bool IsVisible(Entity entity) => entity.Visible && entity.Layout.Equals(ActiveLayout, StringComparison.OrdinalIgnoreCase) && Document.Drawing.LayerFor(entity).Visible;
@@ -38,7 +43,7 @@ public sealed class CadSession
     public event Action? Changed;
     public DrawingScene Scene
     {
-        get { if (_scene == null || _sceneRevision != Document.Revision) { _scene = EntityGeometry.BuildScene(Document.Drawing, ActiveLayout); _sceneRevision = Document.Revision; } return _scene; }
+        get { if (_scene == null || _sceneRevision != Document.Revision) { _scene = _sceneCache.Build(Document.Drawing, ActiveLayout); _sceneRevision = Document.Revision; _snaps = null; } return _scene; }
     }
     public void Invalidate() => Changed?.Invoke();
     public void Select(Guid? id, bool additive = false)
@@ -72,9 +77,15 @@ public sealed class CadSession
     }
     public Guid? HitTest(Vec3 point, double tolerance)
     {
+        if(!point.IsFinite || !double.IsFinite(tolerance) || tolerance<=0)throw new ArgumentException("Invalid pick coordinate or tolerance.");
         Guid? nearest = null; var distance = tolerance;
-        foreach (var path in Scene.Paths)
+        var candidates = new List<int>();
+        var box = new Bounds3(point - new Vec3(tolerance,tolerance,tolerance), point + new Vec3(tolerance,tolerance,tolerance));
+        var scene = Scene; var index = SceneAcceleration.For(scene);
+        index.Paths.Query(box,candidates,xyOnly:true); candidates.Sort();
+        foreach (var number in candidates)
         {
+            var path = scene.Paths[number];
             if (path.Filled && GeometryMath.PointInPolygon(point, path.Points)) { nearest = path.EntityId; distance = 0; }
             for (var i = 0; i < path.Points.Length; i++)
             {
@@ -83,8 +94,10 @@ public sealed class CadSession
                 var d = candidate.DistanceTo(point); if (d <= distance) { distance = d; nearest = path.EntityId; }
             }
         }
-        foreach (var text in Scene.Texts)
+        candidates.Clear(); index.Texts.Query(box,candidates,xyOnly:true); candidates.Sort();
+        foreach (var number in candidates)
         {
+            var text = scene.Texts[number];
             var delta = point - text.Position; var det = GeometryMath.Cross2(text.AxisX, text.AxisY);
             if (Math.Abs(det) < 1e-12) continue;
             var x = GeometryMath.Cross2(delta, text.AxisY) / det; var y = GeometryMath.Cross2(text.AxisX, delta) / det;
@@ -95,26 +108,13 @@ public sealed class CadSession
     }
     public SnapResult Snap(Vec3 point, double tolerance, Vec3? reference = null)
     {
-        var result = new SnapResult(point, SnapKind.None); var best = tolerance;
-        void Candidate(Vec3 p, SnapKind kind, Guid id)
-        {
-            var distance = p.DistanceTo(point); if (distance < best) { best = distance; result = new(p, kind, id); }
-        }
+        if(!point.IsFinite || !double.IsFinite(tolerance) || tolerance<=0)throw new ArgumentException("Invalid snap coordinate or tolerance.");
+        var result = new SnapResult(point, SnapKind.None);
         if (ObjectSnap)
         {
-            foreach (var entity in Document.Drawing.Entities.Where(IsVisible))
-            {
-                switch (entity)
-                {
-                    case LineEntity line: Candidate(line.Start, SnapKind.Endpoint, line.Id); Candidate(line.End, SnapKind.Endpoint, line.Id); Candidate((line.Start + line.End) / 2, SnapKind.Midpoint, line.Id); break;
-                    case CircleEntity circle: Candidate(circle.Center, SnapKind.Center, circle.Id); for (var i = 0; i < 4; i++) Candidate(GeometryMath.OnCircle(circle.Center, circle.Radius, i * 90), SnapKind.Quadrant, circle.Id); break;
-                    case ArcEntity arc: Candidate(arc.Center, SnapKind.Center, arc.Id); Candidate(GeometryMath.OnCircle(arc.Center, arc.Radius, arc.StartAngle), SnapKind.Endpoint, arc.Id); Candidate(GeometryMath.OnCircle(arc.Center, arc.Radius, arc.EndAngle), SnapKind.Endpoint, arc.Id); break;
-                    case PolylineEntity poly: foreach (var v in poly.Vertices) Candidate(v.Position, SnapKind.Endpoint, poly.Id); break;
-                    case PointEntity p: Candidate(p.Position, SnapKind.Endpoint, p.Id); break;
-                }
-            }
-            if (result.Kind == SnapKind.None)
-                foreach (var path in Scene.Paths) for (var i = 0; i + 1 < path.Points.Length; i++) Candidate(GeometryMath.NearestOnSegment(point, path.Points[i], path.Points[i + 1]), SnapKind.Nearest, path.EntityId);
+            var scene = Scene; // establishes revision and invalidates the old snap index first
+            _snaps ??= new SnapIndex(Document.Drawing, scene, ActiveLayout);
+            result = _snaps.Find(point, tolerance, reference, SnapModes);
         }
         if (result.Kind != SnapKind.None) return result;
         if (reference is Vec3 origin && (Ortho || Polar))
@@ -146,7 +146,8 @@ public sealed class CadSession
     public void TransformSelection(string name, Transform3 transform, bool copy = false)
     {
         var selected = EditableSelection(); var changed = selected.Select(e => EntityGeometry.Transform(e, transform, copy)).ToArray();
-        Document.Edit(name, s => s with { Entities = copy ? s.Entities.AddRange(changed) : s.Entities.Select(e => changed.FirstOrDefault(c => c.Id == e.Id) ?? e).ToImmutableArray() });
+        var replacements = changed.ToDictionary(e => e.Id);
+        Document.Edit(name, s => s with { Entities = copy ? s.Entities.AddRange(changed) : s.Entities.Select(e => replacements.GetValueOrDefault(e.Id) ?? e).ToImmutableArray() });
     }
     public void Erase()
     {
@@ -172,8 +173,7 @@ public sealed class CadSession
                     for (var i = 0; i < poly.Vertices.Length - (poly.Closed ? 0 : 1); i++)
                     {
                         var a = poly.Vertices[i]; var b = poly.Vertices[(i + 1) % poly.Vertices.Length];
-                        if (Math.Abs(a.Bulge) > 1e-9) throw new NotSupportedException("Exploding bulged polylines is not yet supported.");
-                        result.Add(new LineEntity(a.Position, b.Position) { Layer = poly.Layer, TrueColor = poly.TrueColor, ColorIndex = poly.ColorIndex, Layout = poly.Layout });
+                        result.Add(AdvancedEditing.ExplodeSegment(a,b) with { Layer=poly.Layer, TrueColor=poly.TrueColor, ColorIndex=poly.ColorIndex, LineWeight=poly.LineWeight, Layout=poly.Layout });
                     }
                     break;
                 case BlockReferenceEntity insert when Document.Drawing.Blocks.TryGetValue(insert.Name, out var block):

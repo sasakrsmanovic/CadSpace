@@ -15,8 +15,12 @@ public static class ScenePicking
         bool Kept(Vec3 p) => clip is not Plane3 plane || plane.SignedDistance(p) <= 1e-8;
         PickResult? result = null;
         var front = double.PositiveInfinity;
-        if (!wireframe) foreach (var triangle in scene.Triangles)
+        var acceleration = SceneAcceleration.For(scene);
+        var candidates = new List<int>();
+        if (!wireframe) acceleration.Triangles.Query(ray, candidates);
+        foreach (var index in candidates)
         {
+            var triangle = scene.Triangles[index];
             if (ray.IntersectTriangle(triangle.A, triangle.B, triangle.C, out var distance) && distance < front && Kept(ray.At(distance)))
             {
                 front = distance; result = new(triangle.EntityId, ray.At(distance), distance);
@@ -31,8 +35,12 @@ public static class ScenePicking
             var dx = p.X - screen.X; var dy = p.Y - screen.Y; var pixels = Math.Sqrt(dx * dx + dy * dy);
             if (pixels <= bestPixelDistance) { bestPixelDistance = pixels; result = new(id, point, depth); }
         }
-        foreach (var path in scene.Paths)
+        candidates.Clear();
+        acceleration.Paths.Visit(b => SceneAcceleration.NearScreen(b, project, screen, tolerance), candidates);
+        candidates.Sort();
+        foreach (var index in candidates)
         {
+            var path = scene.Paths[index];
             if (path.Points.Length == 1) { Candidate(path.EntityId, path.Points[0]); continue; }
             for (var i = 0; i < path.Points.Length - (path.Closed ? 0 : 1); i++)
             {
@@ -50,8 +58,10 @@ public static class ScenePicking
                 Candidate(path.EntityId, a + segment * Math.Clamp(t, 0, 1));
             }
         }
-        foreach (var text in scene.Texts)
+        candidates.Clear(); acceleration.Texts.Query(ray, candidates); candidates.Sort();
+        foreach (var index in candidates)
         {
+            var text = scene.Texts[index];
             var normal = text.AxisX.Cross(text.AxisY);
             if (!ray.IntersectPlane(text.Position, normal, out var hit) || !Kept(hit)) continue;
             var distance = (hit - ray.Origin).Dot(ray.Direction); if (distance > front + 1e-7) continue;
