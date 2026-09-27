@@ -1,0 +1,113 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v0.1.0'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - run: dotnet run --project tests/CadSpace.Tests -c Release
+      - run: dotnet run --project tests/CadSpace.Exchange.Tests -c Release
+  desktop:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet workload install wasm-tools --skip-manifest-update
+      - name: Publish desktop
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-desktop -r ${{ matrix.rid }} --self-contained true -p:Version=${{ needs.verify.outputs.version }} -o artifacts/desktop
+      - name: Archive
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/desktop/* -DestinationPath artifacts/CadSpace-${{ needs.verify.outputs.version }}-${{ matrix.rid }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: artifacts/*.zip
+  packages-and-browser:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet workload install wasm-tools --skip-manifest-update
+      - name: Pack all reusable libraries
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          for project in Geometry Model Dxf Engine Rendering Controls; do
+            dotnet pack src/CadSpace.$project -c Release -p:Version="$VERSION" -o artifacts/packages
+          done
+      - name: Publish portable browser distribution
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm -p:WasmShellWebAppBasePath=./
+      - name: Archive browser and source
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          INDEX=$(find src/CadSpace.App/bin/Release/net10.0-browserwasm -path '*/publish/*' -name index.html -print -quit)
+          test -n "$INDEX"
+          OUT="$PWD/artifacts/CadSpace-$VERSION-browser.zip"
+          (cd "$(dirname "$INDEX")" && zip -qr "$OUT" .)
+          git archive --format=zip HEAD -o "artifacts/CadSpace-$VERSION-source.zip"
+          (cd artifacts && sha256sum *.zip packages/*.nupkg > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-browser-source
+          path: artifacts/
+  publish:
+    needs: [verify, desktop, packages-and-browser]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          mapfile -t FILES < <(find artifacts -type f \( -name '*.zip' -o -name '*.nupkg' -o -name 'SHA256SUMS.txt' \))
+          gh release create "$TAG" "${FILES[@]}" --repo "$REPOSITORY" --target "$COMMIT" --title "CadSpace $TAG" --generate-notes
