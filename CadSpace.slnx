@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CadSpace.Geometry/CadSpace.Geometry.csproj" />
+    <Project Path="src/CadSpace.Model/CadSpace.Model.csproj" />
+    <Project Path="src/CadSpace.Dxf/CadSpace.Dxf.csproj" />
+    <Project Path="src/CadSpace.Engine/CadSpace.Engine.csproj" />
+    <Project Path="src/CadSpace.Rendering/CadSpace.Rendering.csproj" />
+    <Project Path="src/CadSpace.Controls/CadSpace.Controls.csproj" />
+    <Project Path="src/CadSpace.App/CadSpace.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CadSpace.Tests/CadSpace.Tests.csproj" />
+    <Project Path="tests/CadSpace.Exchange.Tests/CadSpace.Exchange.Tests.csproj" />
+  </Folder>
+</Solution>

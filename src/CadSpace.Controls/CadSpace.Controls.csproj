@@ -1,0 +1,9 @@
+<Project Sdk="Uno.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-desktop;net10.0-browserwasm</TargetFrameworks>
+    <UnoSingleProject>true</UnoSingleProject><OutputType>Library</OutputType><GenerateLibraryLayout>true</GenerateLibraryLayout>
+    <UnoFeatures>SkiaRenderer;GLCanvas;</UnoFeatures>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../CadSpace.Engine/CadSpace.Engine.csproj" /><ProjectReference Include="../CadSpace.Rendering/CadSpace.Rendering.csproj" /></ItemGroup>
+</Project>

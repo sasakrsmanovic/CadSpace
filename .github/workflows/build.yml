@@ -1,4 +1,4 @@
-name: Build and test
+name: Build, test and deploy
 on:
   push:
     branches: [main]
@@ -23,10 +23,74 @@ jobs:
         run: dotnet run --project tests/CadSpace.Exchange.Tests -c Release
       - name: Pack reusable libraries
         run: |
-          for project in Geometry Model Dxf Engine; do
+          for project in Geometry Model Dxf Engine Rendering; do
             dotnet pack src/CadSpace.$project -c Release -o artifacts/packages
           done
+      - name: Source archive
+        run: git archive --format=zip HEAD -o artifacts/CadSpace-source.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: cadspace-core-packages
-          path: artifacts/packages
+          name: cadspace-libraries-and-source
+          path: artifacts/
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install browser workload for multi-target restore
+        run: dotnet workload install wasm-tools --skip-manifest-update
+      - name: Build desktop application
+        run: dotnet build src/CadSpace.App -c Release -f net10.0-desktop
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools --skip-manifest-update
+      - name: Publish browser application
+        run: dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm -p:WasmShellWebAppBasePath=/CadSpace/
+      - name: Prepare site
+        shell: bash
+        run: |
+          set -euo pipefail
+          INDEX=$(find src/CadSpace.App/bin/Release/net10.0-browserwasm -path '*/publish/*' -name index.html -print -quit)
+          test -n "$INDEX"
+          mkdir -p artifacts/site
+          cp -a "$(dirname "$INDEX")/." artifacts/site/
+          touch artifacts/site/.nojekyll
+          printf '{"commit":"%s","unoSdk":"6.7.30","configuration":"Release"}\n' "$GITHUB_SHA" > artifacts/site/build-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadspace-browser
+          path: artifacts/site
+          include-hidden-files: true
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          path: artifacts/site
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [core, desktop, browser]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Deploy browser application
+        id: deployment
+        uses: actions/deploy-pages@v4
