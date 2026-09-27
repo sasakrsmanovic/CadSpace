@@ -83,11 +83,20 @@ jobs:
       - name: Publish browser application
         run: dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm -p:WasmShellWebAppBasePath=/CadSpace/
       - name: Pack reusable Uno controls
-        run: dotnet pack src/CadSpace.Controls -c Release -o artifacts/control-packages
+        run: |
+          dotnet pack src/CadSpace.Controls -c Release -o artifacts/control-packages
+          test -f artifacts/control-packages/CadSpace.Controls.0.1.0.nupkg
+          python - <<'PYVERIFY'
+          import zipfile
+          with zipfile.ZipFile('artifacts/control-packages/CadSpace.Controls.0.1.0.nupkg') as package:
+              for target in ('net10.0-desktop', 'net10.0-browserwasm'):
+                  assert f'lib/{target}/CadSpace.Controls.dll' in package.namelist(), target
+          PYVERIFY
       - uses: actions/upload-artifact@v4
         with:
           name: cadspace-controls
           path: artifacts/control-packages
+          if-no-files-found: error
       - name: Prepare site
         shell: bash
         run: |
