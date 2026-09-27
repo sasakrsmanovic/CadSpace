@@ -68,6 +68,21 @@ See [line-editing details and boundaries](LINE-EDITING.md). Modification errors 
 | PERSPECTIVE | PERSPECTIVE | 1 perspective, 0 orthographic. |
 | CLIP3D | CLIP3D | x,y,z,nx,ny,nz or OFF; retains normal·(point-origin) <= 0, uncapped display only. |
 
-The complete registry has 55 commands. EXPLODE now handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
+The complete registry has 59 commands. EXPLODE now handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
 
 Tab accepts completion in an idle command box; F2 expands history, F12 toggles dynamic input, and Ctrl+1 toggles Properties. Snap options expose per-mode choices including line intersections/perpendiculars and circle/arc tangents. Browser shortcuts may take precedence.
+
+## Selection and grip workflows
+
+| Command | Alias | Inputs / behavior |
+| --- | --- | --- |
+| STRETCH | S | First crossing-window corner; opposite corner; base point; displacement point. Fully enclosed roots translate. Partial LINE/LWPOLYLINE/3D POLYLINE/SPLINE/DIMENSION vertices or supported insertion points inside the box move. |
+| QSELECT | QS | `kind,layer[,mode[,scope]]`, for example `LINE,*,Replace,All`. `*` matches any whole field, not a general wildcard expression. Mode is Replace/Add/Remove/Toggle. Scope is All (visible active-layout objects) or Selection. The ribbon instead opens a type/layer dialog. |
+| SELECTSIMILAR | SE | Select visible active-layout objects matching the selected roots' kind and layer. No other property-match options yet. |
+| RENDERSTATS | RS | Report actual scene, overlay and model RenderOverride counters. These are recording/render counts, not presented frames or GPU timings. |
+
+STRETCH uses an explicit crossing box regardless of drag direction. It does not support fence/lasso/multiple-box selection, arbitrary UCS, arc deformation, NURBS surface deformation, constraint propagation or every AutoCAD option. Partial objects without an eligible grip in the box are ignored; unsupported partial deformation with an included grip is rejected. Locked candidates reject the transaction. A partial XY polyline remains planar; bulges are retained, not constraint-solved. Invalid or unsupported multi-object edits leave the document unchanged.
+
+In the 2D viewport, normal clicks/windows add, Shift removes and Ctrl toggles. Clicking empty space without a modifier clears selection. SC enables an overlap menu capped at 25 roots; Ctrl+W is an alternative where the browser does not reserve it. Text uses conservative envelopes. The 3D click-selection behavior remains separate.
+
+Visible blue grips edit line endpoints/midpoints, circle center/radius, polyline vertices, spline control points, dimension extension/location points, point/text/block insertions and placed equivalents. Arc/ellipse grips currently move only the center. Meshes, composite imported inserts and opaque geometry do not have editable subobject grips. Grip drag previews are transient; release creates one undo step, Escape and capture loss cancel. Locked objects expose no grips. To keep pointer work bounded, more than 200 selected roots or 4,096 handles hides grips; commands remain available.
