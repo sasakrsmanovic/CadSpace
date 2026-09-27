@@ -11,7 +11,7 @@ public static class LineEditing
     {
         var boundaries = session.EditableSelection().Select(e => e as LineEntity ?? throw new ArgumentException("Select line boundaries only.")).ToArray();
         var target = session.Document.Drawing.Entities.OfType<LineEntity>()
-            .Where(l => !session.Selection.Contains(l.Id) && session.Document.Drawing.LayerFor(l).Visible)
+            .Where(l => !session.Selection.Contains(l.Id) && session.IsVisible(l))
             .Select(l => (Line: l, Distance: GeometryMath.NearestOnSegment(pick, l.Start, l.End).DistanceTo(pick)))
             .Where(p => p.Distance <= tolerance).OrderBy(p => p.Distance).Select(p => p.Line).FirstOrDefault()
             ?? throw new ArgumentException("Pick an unselected line close to the pointer.");
@@ -78,9 +78,9 @@ public static class LineEditing
             var center = corner + (u + v).Normalized * (value / Math.Sin(angle / 2));
             var start = GeometryMath.Angle(p1 - center); var end = GeometryMath.Angle(p2 - center);
             if (GeometryMath.NormalizeAngle(end - start) > 180) (start, end) = (end, start);
-            connector = new ArcEntity(center, value, start, end) { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight };
+            connector = new ArcEntity(center, value, start, end) { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight, Layout = first.Layout };
         }
-        else if (value > 0) connector = new LineEntity(p1, p2) { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight };
+        else if (value > 0) connector = new LineEntity(p1, p2) { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight, Layout = first.Layout };
         session.Document.Edit(fillet ? "Fillet lines" : "Chamfer lines", state =>
         {
             var entities = state.Entities.Select(e => e.Id == a.Id ? a : e.Id == b.Id ? b : e).ToImmutableArray();
@@ -92,7 +92,7 @@ public static class LineEditing
         var selected = session.EditableSelection();
         if (selected.Length < 2 || selected.Any(e => e is not LineEntity)) throw new ArgumentException("Select at least two connected lines.");
         var lines = selected.Cast<LineEntity>().ToList(); Planar(lines);
-        var vertices = new LinkedList<Vec3>([lines[0].Start, lines[0].End]); lines.RemoveAt(0);
+        var vertices = new LinkedList<Vec3>(new Vec3[] { lines[0].Start, lines[0].End }); lines.RemoveAt(0);
         while (lines.Count > 0)
         {
             var index = lines.FindIndex(l => l.Start.DistanceTo(vertices.First!.Value) <= tolerance || l.End.DistanceTo(vertices.First!.Value) <= tolerance || l.Start.DistanceTo(vertices.Last!.Value) <= tolerance || l.End.DistanceTo(vertices.Last!.Value) <= tolerance);
@@ -105,11 +105,10 @@ public static class LineEditing
         }
         var points = vertices.ToList(); var closed = points[0].DistanceTo(points[^1]) <= tolerance;
         if (closed) points.RemoveAt(points.Count - 1);
-        // Reject branching/repeated interior nodes rather than silently producing an ambiguous polyline.
         for (var i = 0; i < points.Count; i++) for (var j = i + 1; j < points.Count; j++)
             if (points[i].DistanceTo(points[j]) <= tolerance) throw new ArgumentException("The chain contains a repeated/branching vertex.");
         var ids = selected.Select(e => e.Id).ToHashSet(); var first = selected[0];
-        var polyline = PolylineEntity.FromPoints(points, closed) with { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight };
+        var polyline = PolylineEntity.FromPoints(points, closed) with { Layer = first.Layer, TrueColor = first.TrueColor, ColorIndex = first.ColorIndex, LineWeight = first.LineWeight, Layout = first.Layout };
         session.Document.Edit("Join lines", state => state with { Entities = state.Entities.Where(e => !ids.Contains(e.Id)).Append(polyline).ToImmutableArray() });
     }
     public static void BreakLine(this CadSession session, Vec3 first, Vec3 second)

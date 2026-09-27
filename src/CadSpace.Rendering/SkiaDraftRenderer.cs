@@ -9,6 +9,7 @@ public sealed class SkiaDraftRenderer : IDisposable
 {
     private readonly SKPaint _stroke = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
     private readonly SKPaint _fill = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+    private readonly List<int> _visiblePaths = new(), _visibleTexts = new();
     private readonly SKFont _font = new(SKTypeface.Default, 12);
     public static SKColor Color(uint c) => new((byte)(c >> 16), (byte)(c >> 8), (byte)c, (byte)(c >> 24));
     private static SKPoint Pixel(Camera2D camera, Vec3 p) { var s = camera.WorldToScreen(p); return new((float)s.X, (float)s.Y); }
@@ -22,9 +23,12 @@ public sealed class SkiaDraftRenderer : IDisposable
     public void DrawScene(SKCanvas canvas, Camera2D camera, DrawingScene scene, IReadOnlySet<Guid> selected, bool preview = false)
     {
         var bounds = camera.VisibleBounds;
-        foreach (var path in scene.Paths)
+        var acceleration = SceneAcceleration.For(scene);
+        _visiblePaths.Clear(); acceleration.Paths.Query(bounds, _visiblePaths, xyOnly:true); _visiblePaths.Sort();
+        foreach (var index in _visiblePaths)
         {
-            if (path.Points.IsEmpty || !bounds.IntersectsXY(Bounds3.From(path.Points))) continue;
+            var path = scene.Paths[index];
+            if (path.Points.IsEmpty) continue;
             var highlight = selected.Contains(path.EntityId);
             var color = preview ? new SKColor(151, 208, 252, 180) : highlight ? new SKColor(86, 172, 255) : Color(path.Color);
             _stroke.Color = color; _stroke.StrokeWidth = highlight ? 2 : Math.Clamp((float)path.Weight * 3, 0.85f, 4);
@@ -35,21 +39,25 @@ public sealed class SkiaDraftRenderer : IDisposable
             using var outline = new SKPath(); outline.MoveTo(Pixel(camera, path.Points[0]));
             for (var i = 1; i < path.Points.Length; i++) outline.LineTo(Pixel(camera, path.Points[i]));
             if (path.Closed) outline.Close();
-            if (path.Filled) { _fill.Color = color.WithAlpha(90); canvas.DrawPath(outline, _fill); }
-            canvas.DrawPath(outline, _stroke);
+            if (path.Filled) { _fill.Color = color; canvas.DrawPath(outline, _fill); }
+            else canvas.DrawPath(outline, _stroke);
             if (highlight && path.Points.Length < 20)
             {
                 _fill.Color = new SKColor(70, 155, 247);
                 foreach (var vertex in path.Points) { var p = Pixel(camera, vertex); canvas.DrawRect(p.X - 3, p.Y - 3, 6, 6, _fill); }
             }
         }
-        foreach (var label in scene.Texts)
+        _visibleTexts.Clear(); acceleration.Texts.Query(bounds, _visibleTexts, xyOnly:true); _visibleTexts.Sort();
+        foreach (var index in _visibleTexts)
         {
+            var label = scene.Texts[index];
             var point = Pixel(camera, label.Position); var height = label.Height * camera.PixelsPerUnit;
             if (height < 2 || height > 10000) continue;
             _font.Size = (float)height;
             _fill.Color = preview ? new SKColor(151, 208, 252) : selected.Contains(label.EntityId) ? new SKColor(86, 172, 255) : Color(label.Color);
-            canvas.Save(); canvas.Translate(point.X, point.Y); canvas.RotateDegrees((float)-label.Rotation);
+            canvas.Save();
+            var textMatrix = new SKMatrix((float)label.AxisX.X, (float)-label.AxisY.X, point.X, (float)-label.AxisX.Y, (float)label.AxisY.Y, point.Y, 0, 0, 1);
+            canvas.Concat(in textMatrix);
             var lines = label.Text.Split('\n');
             for (var i = 0; i < lines.Length; i++) canvas.DrawText(lines[i], 0, (float)(i * height * 1.3), _font, _fill);
             canvas.Restore();

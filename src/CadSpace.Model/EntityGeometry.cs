@@ -4,11 +4,15 @@ using CadSpace.Geometry;
 namespace CadSpace.Model;
 
 public sealed record ScenePath(Guid EntityId, string Layer, uint Color, ImmutableArray<Vec3> Points, bool Closed, bool Filled = false, double Weight = 0.25);
-public sealed record SceneText(Guid EntityId, string Layer, uint Color, Vec3 Position, string Text, double Height, double Rotation);
+public sealed record SceneText(Guid EntityId, string Layer, uint Color, Vec3 Position, string Text, double Height, double Rotation)
+{
+    public Vec3 AxisX { get; init; } = Vec3.UnitX;
+    public Vec3 AxisY { get; init; } = Vec3.UnitY;
+}
 public sealed record SceneTriangle(Guid EntityId, uint Color, Vec3 A, Vec3 B, Vec3 C);
 public sealed record DrawingScene(ImmutableArray<ScenePath> Paths, ImmutableArray<SceneText> Texts, ImmutableArray<SceneTriangle> Triangles)
 {
-    public Bounds3 Bounds => Bounds3.From(Paths.SelectMany(p => p.Points).Concat(Texts.Select(t => t.Position)).Concat(Triangles.SelectMany(t => new[] { t.A, t.B, t.C })));
+    public Bounds3 Bounds => Bounds3.From(Paths.SelectMany(p => p.Points).Concat(Texts.SelectMany(t => new[] { t.Position, t.Position + t.AxisX * (t.Height * Math.Max(1, t.Text.Length) * .65) + t.AxisY * t.Height })).Concat(Triangles.SelectMany(t => new[] { t.A, t.B, t.C })));
 }
 
 public static class EntityGeometry
@@ -19,16 +23,21 @@ public static class EntityGeometry
         ArcEntity a => [a.Center], EllipseEntity l => [l.Center, l.MajorAxis],
         PolylineEntity p => p.Vertices.Select(v => v.Position), TextEntity t => [t.Position],
         DimensionEntity d => [d.First, d.Second, d.Location], HatchEntity h => h.Boundary,
-        MeshEntity m => m.Vertices, BlockReferenceEntity b => [b.Position], _ => []
+        MeshEntity m => m.Vertices, BlockReferenceEntity b => [b.Position], _ => AdvancedGeometry.Anchors(e)
     };
-    public static uint AciColor(int index) => index switch
+    public static uint AciColor(int index)
     {
-        1 => 0xFFFF5A5A, 2 => 0xFFFFD966, 3 => 0xFF6BDB8B, 4 => 0xFF5EDBEB, 5 => 0xFF648DFF, 6 => 0xFFD984EC,
-        7 => 0xFFE5E9EF, 8 => 0xFF808080, 9 => 0xFFC0C0C0, _ => 0xFFD8DFE8
-    };
-    public static ImmutableArray<Vec3> Curve(Vec3 center, double radius, double start, double sweep, int segments = 96)
+        if (index < 10) return index switch { 1 => 0xFFFF0000, 2 => 0xFFFFFF00, 3 => 0xFF00FF00, 4 => 0xFF00FFFF, 5 => 0xFF0000FF, 6 => 0xFFFF00FF, 7 => 0xFFE5E9EF, 8 => 0xFF808080, 9 => 0xFFC0C0C0, _ => 0xFFD8DFE8 };
+        if (index >= 250) { var grey = new byte[] { 51, 80, 105, 130, 190, 255 }[Math.Clamp(index - 250, 0, 5)]; return 0xFF000000u | (uint)(grey << 16 | grey << 8 | grey); }
+        var hue = (index - 10) / 10 * 15.0; var shade = (index - 10) % 10;
+        var value = new[] { 1.0, 1.0, .8, .8, .6, .6, .5, .5, .3, .3 }[shade]; var saturation = shade % 2 == 0 ? 1 : .5;
+        var chroma = value * saturation; var x = chroma * (1 - Math.Abs(hue / 60 % 2 - 1)); var m = value - chroma;
+        var rgb = hue switch { < 60 => (chroma, x, 0.0), < 120 => (x, chroma, 0.0), < 180 => (0.0, chroma, x), < 240 => (0.0, x, chroma), < 300 => (x, 0.0, chroma), _ => (chroma, 0.0, x) };
+        return 0xFF000000u | (uint)((int)Math.Round((rgb.Item1 + m) * 255) << 16 | (int)Math.Round((rgb.Item2 + m) * 255) << 8 | (int)Math.Round((rgb.Item3 + m) * 255));
+    }
+    public static ImmutableArray<Vec3> Curve(Vec3 center, double radius, double start, double sweep, int segments = 192)
     {
-        var count = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / 360 * segments), 2, 2048);
+        var count = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / 360 * segments), 2, 8192);
         return Enumerable.Range(0, count + 1).Select(i => GeometryMath.OnCircle(center, radius, start + sweep * i / count)).ToImmutableArray();
     }
     public static ImmutableArray<Vec3> PolylinePoints(PolylineEntity polyline)
@@ -45,26 +54,41 @@ public static class EntityGeometry
             var center = (a.Position + b) / 2 + normal * (length * (1 - a.Bulge * a.Bulge) / (4 * a.Bulge));
             var points = Curve(center, center.DistanceTo(a.Position), GeometryMath.Angle(a.Position - center), GeometryMath.Degrees(4 * Math.Atan(a.Bulge)));
             for (var j = 1; j < points.Length - 1; j++) result.Add(points[j]);
+            if (result.Count > 1000000) throw new ArgumentException("Polyline tessellation exceeds one million points.");
         }
         return result.ToImmutable();
     }
-    public static DrawingScene BuildScene(Drawing drawing)
+    public static DrawingScene BuildScene(Drawing drawing, string layout = "Model")
     {
-        var paths = ImmutableArray.CreateBuilder<ScenePath>();
-        var texts = ImmutableArray.CreateBuilder<SceneText>();
-        var triangles = ImmutableArray.CreateBuilder<SceneTriangle>();
+        var paths = ImmutableArray.CreateBuilder<ScenePath>(); var texts = ImmutableArray.CreateBuilder<SceneText>(); var triangles = ImmutableArray.CreateBuilder<SceneTriangle>();
+        var nodes = 0; var vertices = 0;
         void Add(Entity e, Transform3 transform, Guid root, string? inheritedLayer, uint? inheritedColor, int depth)
         {
-            if (depth > 32) return;
+            if (depth > 32 || ++nodes > 200000) throw new ArgumentException("Expanded scene exceeds the nesting/entity budget.");
             var layerName = e.Layer == "0" && inheritedLayer != null ? inheritedLayer : e.Layer;
             var layer = drawing.Layers.TryGetValue(layerName, out var l) ? l : drawing.Layers["0"];
-            if (!layer.Visible) return;
+            if (!layer.Visible || !e.Visible) return;
             var color = e.TrueColor ?? (e.ColorIndex == 0 ? inheritedColor ?? layer.Color : e.ColorIndex == 256 ? layer.Color : AciColor(e.ColorIndex));
             var weight = e.LineWeight < 0 ? layer.LineWeight : e.LineWeight;
-            void Path(IEnumerable<Vec3> points, bool closed = false, bool fill = false) => paths.Add(new(root, layerName, color, points.Select(transform.Point).ToImmutableArray(), closed, fill, weight));
-            void Text(Vec3 p, string value, double height, double rotation = 0) => texts.Add(new(root, layerName, color, transform.Point(p), value, height * transform.Y.Length, rotation + GeometryMath.Angle(transform.X)));
+            void Path(IEnumerable<Vec3> points, bool closed = false, bool fill = false)
+            {
+                var p = points.Select(transform.Point).ToImmutableArray(); vertices += p.Length;
+                if (vertices > 2000000) throw new ArgumentException("Expanded scene exceeds two million vertices.");
+                paths.Add(new(root, layerName, color, p, closed, fill, weight));
+            }
+            void Text(Vec3 p, string value, double height, double rotation = 0)
+            {
+                var orientation = Transform3.RotationZ(rotation).Then(transform);
+                var yScale = orientation.Y.Length; var h = height * yScale;
+                texts.Add(new(root, layerName, color, transform.Point(p), value, h, GeometryMath.Angle(orientation.X)) { AxisX = orientation.X / Math.Max(1e-15, yScale), AxisY = orientation.Y / Math.Max(1e-15, yScale) });
+            }
+            void Child(Entity child, Transform3 placement, bool forceStyle = true) => Add(forceStyle ? child with { Layer = layerName, TrueColor = color, ColorIndex = 256, LineWeight = weight } : child, placement, root, layerName, color, depth + 1);
             switch (e)
             {
+                case PlacedEntity placed: Child(placed.Geometry, placed.Placement.Then(transform)); break;
+                case CompositeEntity composite: foreach (var child in composite.Children) Child(child, transform, false); break;
+                case SplineEntity or Polyline3DEntity or HatchRegionEntity:
+                    foreach (var child in AdvancedGeometry.Expand(e)) Child(child, transform); break;
                 case LineEntity line: Path([line.Start, line.End]); break;
                 case PointEntity point: Path([point.Position]); break;
                 case CircleEntity circle: Path(Curve(circle.Center, circle.Radius, 0, 360), true); break;
@@ -72,82 +96,75 @@ public static class EntityGeometry
                 case PolylineEntity polyline: Path(PolylinePoints(polyline), polyline.Closed); break;
                 case EllipseEntity ellipse:
                     var minor = new Vec3(-ellipse.MajorAxis.Y, ellipse.MajorAxis.X) * ellipse.Ratio;
-                    var sweep = ellipse.EndParameter - ellipse.StartParameter;
-                    if (sweep <= 0) sweep += 2 * Math.PI;
-                    Path(Enumerable.Range(0, 129).Select(i => ellipse.Center + ellipse.MajorAxis * Math.Cos(ellipse.StartParameter + sweep * i / 128) + minor * Math.Sin(ellipse.StartParameter + sweep * i / 128)), Math.Abs(sweep - Math.PI * 2) < 1e-8); break;
+                    var sweep = ellipse.EndParameter - ellipse.StartParameter; if (sweep <= 0) sweep += 2 * Math.PI;
+                    Path(Enumerable.Range(0, 257).Select(i => ellipse.Center + ellipse.MajorAxis * Math.Cos(ellipse.StartParameter + sweep * i / 256) + minor * Math.Sin(ellipse.StartParameter + sweep * i / 256)), Math.Abs(sweep - Math.PI * 2) < 1e-8); break;
                 case TextEntity text: Text(text.Position, text.Text.Replace("\\P", "\n"), text.Height, text.Rotation); break;
                 case DimensionEntity dim:
-                    var vector = dim.Second - dim.First;
-                    if (vector.Length < 1e-9) break;
-                    var direction = vector.Normalized;
-                    var normal = new Vec3(-direction.Y, direction.X);
-                    var offset = (dim.Location - dim.First).Dot(normal);
-                    var p1 = dim.First + normal * offset; var p2 = dim.Second + normal * offset;
+                    var vector = dim.Second - dim.First; if (vector.Length < 1e-9) break;
+                    var direction = vector.Normalized; var normal = new Vec3(-direction.Y, direction.X);
+                    var offset = (dim.Location - dim.First).Dot(normal); var p1 = dim.First + normal * offset; var p2 = dim.Second + normal * offset;
                     Path([dim.First, p1 + normal * 4]); Path([dim.Second, p2 + normal * 4]); Path([p1, p2]);
-                    Path([p1 + direction * 7 + normal * 2, p1, p1 + direction * 7 - normal * 2]);
-                    Path([p2 - direction * 7 + normal * 2, p2, p2 - direction * 7 - normal * 2]);
+                    Path([p1 + direction * 7 + normal * 2, p1, p1 + direction * 7 - normal * 2]); Path([p2 - direction * 7 + normal * 2, p2, p2 - direction * 7 - normal * 2]);
                     Text((p1 + p2) / 2 + normal * 4, vector.Length.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), 10, GeometryMath.Angle(direction)); break;
                 case HatchEntity hatch:
-                    Path(hatch.Boundary, true, hatch.Solid);
-                    if (!hatch.Solid && hatch.Spacing > 0 && hatch.Boundary.Length >= 3)
-                    {
-                        var rotate = Transform3.RotationZ(-hatch.Angle); var inverse = Transform3.RotationZ(hatch.Angle);
-                        var polygon = hatch.Boundary.Select(rotate.Point).ToArray(); var bounds = Bounds3.From(polygon);
-                        var spacing = Math.Max(hatch.Spacing, bounds.Size.Y / 2000);
-                        for (var y = Math.Floor(bounds.Min.Y / spacing) * spacing; y <= bounds.Max.Y; y += spacing)
-                        {
-                            var intersections = new List<double>();
-                            for (var i = 0; i < polygon.Length; i++)
-                            {
-                                var a = polygon[i]; var b = polygon[(i + 1) % polygon.Length];
-                                if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y)) intersections.Add(a.X + (y - a.Y) * (b.X - a.X) / (b.Y - a.Y));
-                            }
-                            intersections.Sort();
-                            for (var i = 0; i + 1 < intersections.Count; i += 2) Path([inverse.Point(new(intersections[i], y, polygon[0].Z)), inverse.Point(new(intersections[i + 1], y, polygon[0].Z))]);
-                        }
-                    }
-                    break;
+                    var pattern = ImmutableArray.Create(new HatchPatternLine(hatch.Angle, default, Transform3.RotationZ(hatch.Angle).Vector(new(0, hatch.Spacing)), []));
+                    var region = new HatchRegionEntity([hatch.Boundary.Select(p => new PolyVertex(p)).ToImmutableArray()], hatch.Solid, pattern, hatch.Solid ? "SOLID" : "ANSI31");
+                    foreach (var child in AdvancedGeometry.Expand(region)) Child(child, transform); break;
                 case MeshEntity mesh:
+                    var edges = new Dictionary<(int, int), (Vec3 Normal, int Count, bool Crease)>();
+                    void Edge(int a, int b, Vec3 normal)
+                    {
+                        var key = a < b ? (a, b) : (b, a);
+                        if (edges.TryGetValue(key, out var old)) edges[key] = (old.Normal, old.Count + 1, old.Crease || Math.Abs(old.Normal.Dot(normal)) < .99999);
+                        else edges.Add(key, (normal, 1, false));
+                    }
                     for (var i = 0; i < mesh.Triangles.Length; i += 3)
                     {
-                        var a = transform.Point(mesh.Vertices[mesh.Triangles[i]]); var b = transform.Point(mesh.Vertices[mesh.Triangles[i + 1]]); var c = transform.Point(mesh.Vertices[mesh.Triangles[i + 2]]);
+                        var ia = mesh.Triangles[i]; var ib = mesh.Triangles[i + 1]; var ic = mesh.Triangles[i + 2];
+                        var a = transform.Point(mesh.Vertices[ia]); var b = transform.Point(mesh.Vertices[ib]); var c = transform.Point(mesh.Vertices[ic]);
+                        var n = (b - a).Cross(c - a); if (n.Length < 1e-12) continue;
                         triangles.Add(new(root, color, a, b, c));
-                        paths.Add(new(root, layerName, color, [a, b, c], true, false, weight));
+                        if (triangles.Count > 1000000) throw new ArgumentException("Expanded scene exceeds one million triangles.");
+                        if (mesh.Operation != "Hatch fill") { Edge(ia, ib, n.Normalized); Edge(ib, ic, n.Normalized); Edge(ic, ia, n.Normalized); }
                     }
+                    foreach (var edge in edges.Where(p => p.Value.Count == 1 || p.Value.Crease)) Path([mesh.Vertices[edge.Key.Item1], mesh.Vertices[edge.Key.Item2]]);
+                    // Filled regions have an explicit 2D fill, not their internal tessellation edges.
+                    if (mesh.Operation == "Hatch fill") for (var i = 0; i < mesh.Triangles.Length; i += 3) Path([mesh.Vertices[mesh.Triangles[i]], mesh.Vertices[mesh.Triangles[i + 1]], mesh.Vertices[mesh.Triangles[i + 2]]], true, true);
                     break;
                 case BlockReferenceEntity insert when drawing.Blocks.TryGetValue(insert.Name, out var block):
                     var local = Transform3.Translation(-block.BasePoint).Then(Transform3.Scaling(insert.Scale)).Then(Transform3.RotationZ(insert.Rotation)).Then(Transform3.Translation(insert.Position)).Then(transform);
-                    foreach (var child in block.Entities) Add(child, local, root, layerName, color, depth + 1);
-                    break;
+                    foreach (var child in block.Entities) Add(child, local, root, layerName, color, depth + 1); break;
             }
         }
-        foreach (var entity in drawing.Entities) Add(entity, Transform3.Identity, entity.Id, null, null, 0);
+        foreach (var entity in drawing.Entities.Where(e => e.Layout.Equals(layout, StringComparison.OrdinalIgnoreCase))) Add(entity, Transform3.Identity, entity.Id, null, null, 0);
         return new(paths.ToImmutable(), texts.ToImmutable(), triangles.ToImmutable());
     }
-    /// <summary>Similarity transforms preserve analytic curves. General affine transforms of curved entities are rejected.</summary>
     public static Entity Transform(Entity entity, Transform3 transform, bool copy = false)
     {
-        var scale = transform.X.Length;
-        var mirror = GeometryMath.Cross2(transform.X, transform.Y) < 0;
-        if (entity is CircleEntity or ArcEntity or PolylineEntity or TextEntity or DimensionEntity or HatchEntity)
-        {
-            if (Math.Abs(transform.X.Dot(transform.Y)) > 1e-7 || Math.Abs(scale - transform.Y.Length) > 1e-7 || Math.Abs(transform.X.Z) + Math.Abs(transform.Y.Z) > 1e-7)
-                throw new NotSupportedException("This curved/annotated entity requires an XY similarity transform.");
-        }
+        if (!transform.X.IsFinite || !transform.Y.IsFinite || !transform.Z.IsFinite || !transform.Origin.IsFinite || Math.Abs(transform.Determinant) < 1e-18) throw new ArgumentException("Transform must be finite and nonsingular.");
+        var scale = transform.X.Length; var mirror = GeometryMath.Cross2(transform.X, transform.Y) < 0;
+        var xySimilarity = Math.Abs(transform.X.Dot(transform.Y)) <= 1e-7 * Math.Max(1, scale * scale) && Math.Abs(scale - transform.Y.Length) <= 1e-7 * Math.Max(1, scale) && Math.Abs(transform.X.Z) + Math.Abs(transform.Y.Z) <= 1e-7;
         double Angle(double angle) => GeometryMath.Angle(transform.Vector(GeometryMath.OnCircle(default, 1, angle)));
+        Entity Place() => new PlacedEntity(entity, transform) { Id = entity.Id, Handle = entity.Handle, Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Visible = entity.Visible, Layout = entity.Layout };
         Entity result = entity switch
         {
+            OpaqueEntity => throw new NotSupportedException("Opaque DXF records cannot be transformed without a geometry interpreter."),
+            PlacedEntity p => p with { Placement = p.Placement.Then(transform) },
+            SplineEntity s => s with { ControlPoints = s.ControlPoints.Select(transform.Point).ToImmutableArray() },
+            Polyline3DEntity p => p with { Points = p.Points.Select(transform.Point).ToImmutableArray() },
+            CompositeEntity c => c with { Children = c.Children.Select(e => Transform(e, transform, copy)).ToImmutableArray(), SourceRecord = "" },
             LineEntity l => l with { Start = transform.Point(l.Start), End = transform.Point(l.End) },
             PointEntity p => p with { Position = transform.Point(p.Position) },
-            CircleEntity c => c with { Center = transform.Point(c.Center), Radius = c.Radius * scale },
-            ArcEntity a => a with { Center = transform.Point(a.Center), Radius = a.Radius * scale, StartAngle = Angle(mirror ? a.EndAngle : a.StartAngle), EndAngle = Angle(mirror ? a.StartAngle : a.EndAngle) },
-            PolylineEntity p => p with { Vertices = p.Vertices.Select(v => new PolyVertex(transform.Point(v.Position), mirror ? -v.Bulge : v.Bulge)).ToImmutableArray() },
-            TextEntity t when !mirror => t with { Position = transform.Point(t.Position), Height = t.Height * scale, Rotation = Angle(t.Rotation) },
-            DimensionEntity d => d with { First = transform.Point(d.First), Second = transform.Point(d.Second), Location = transform.Point(d.Location) },
-            HatchEntity h => h with { Boundary = h.Boundary.Select(transform.Point).ToImmutableArray(), Spacing = h.Spacing * scale, Angle = Angle(h.Angle) },
             MeshEntity m => m with { Vertices = m.Vertices.Select(transform.Point).ToImmutableArray(), Triangles = transform.Determinant < 0 ? m.Triangles.Chunk(3).SelectMany(t => new[] { t[0], t[2], t[1] }).ToImmutableArray() : m.Triangles },
-            BlockReferenceEntity b when !mirror => b with { Position = transform.Point(b.Position), Scale = b.Scale * scale, Rotation = Angle(b.Rotation) },
-            _ => throw new NotSupportedException($"Transform is not supported for {entity.Kind}; no geometry was changed.")
+            CircleEntity c when xySimilarity => c with { Center = transform.Point(c.Center), Radius = c.Radius * scale },
+            ArcEntity a when xySimilarity => a with { Center = transform.Point(a.Center), Radius = a.Radius * scale, StartAngle = Angle(mirror ? a.EndAngle : a.StartAngle), EndAngle = Angle(mirror ? a.StartAngle : a.EndAngle) },
+            PolylineEntity p when xySimilarity => p with { Vertices = p.Vertices.Select(v => new PolyVertex(transform.Point(v.Position), mirror ? -v.Bulge : v.Bulge)).ToImmutableArray() },
+            EllipseEntity e when xySimilarity && !mirror => e with { Center = transform.Point(e.Center), MajorAxis = transform.Vector(e.MajorAxis) },
+            TextEntity t when xySimilarity && !mirror => t with { Position = transform.Point(t.Position), Height = t.Height * scale, Rotation = Angle(t.Rotation) },
+            DimensionEntity d when xySimilarity => d with { First = transform.Point(d.First), Second = transform.Point(d.Second), Location = transform.Point(d.Location) },
+            HatchEntity h when xySimilarity => h with { Boundary = h.Boundary.Select(transform.Point).ToImmutableArray(), Spacing = h.Spacing * scale, Angle = Angle(h.Angle) },
+            BlockReferenceEntity b when xySimilarity && !mirror && Math.Abs(transform.Z.Length - scale) < 1e-7 => b with { Position = transform.Point(b.Position), Scale = b.Scale * scale, Rotation = Angle(b.Rotation) },
+            _ => Place()
         };
         return copy ? result with { Id = Guid.NewGuid(), Handle = "" } : result;
     }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using CadSpace.Geometry;
 using CadSpace.Model;
 
@@ -23,6 +24,13 @@ public sealed class CommandEngine(CadSession session)
     public event Action<string>? ViewRequested;
     public static IReadOnlyList<CommandInfo> Commands { get; } = new CommandInfo[]
     {
+        new("3DPOLY", "3P", "WCS polyline; Enter finishes, C closes", "Draw"),
+        new("SPLINE", "SPL", "Clamped cubic control-point spline; Enter finishes", "Draw"),
+        new("ROTATE3D", "3R", "Selected objects, two axis points and angle", "Modify"),
+        new("MIRROR3D", "3M", "Selected objects and three mirror-plane points", "Modify"),
+        new("ALIGN3D", "3A", "Three source points followed by three target points; rigid alignment", "Modify"),
+        new("LOFT", "LOFT", "Capped polygonal loft through selected matching profiles", "Model"),
+        new("SWEEP", "SW", "Parallel-transport mesh sweep of a profile along an open polyline", "Model"),
         new("LINE", "L", "Connected line segments", "Draw"), new("PLINE", "PL", "Polyline; Enter finishes, C closes", "Draw"), new("RECTANG", "REC", "Rectangle from two corners", "Draw"),
         new("CIRCLE", "C", "Center and radius", "Draw"), new("ARC", "A", "Arc through three points", "Draw"), new("POINT", "PO", "Model-space point", "Draw"), new("ELLIPSE", "EL", "Center, major-axis point, minor radius", "Draw"),
         new("TEXT", "T", "Single-line text", "Annotate"), new("DIMALIGNED", "DAL", "Aligned dimension", "Annotate"), new("HATCH", "H", "Hatch selected closed polyline", "Annotate"),
@@ -32,11 +40,15 @@ public sealed class CommandEngine(CadSession session)
         new("TRIM", "TR", "Select line boundaries, then pick a segment to remove", "Modify"), new("EXTEND", "EX", "Select line boundaries, then pick a line end to extend", "Modify"),
         new("FILLET", "F", "Round the corner between two selected lines", "Modify"), new("CHAMFER", "CHA", "Equal-distance bevel between two selected lines", "Modify"), new("JOIN", "J", "Join a connected line chain", "Modify"), new("BREAK", "BR", "Remove a portion of one selected line", "Modify"),
         new("BLOCK", "B", "Create block from selection", "Blocks"), new("INSERT", "I", "Insert block definition", "Blocks"),
+        new("UNION", "UNI", "Boolean union of closed triangle meshes", "Model"), new("SUBTRACT", "SU", "Subtract closed meshes from the first selected mesh in drawing order", "Model"), new("INTERSECT", "IN", "Intersect closed triangle meshes", "Model"),
         new("BOX", "BOX", "Triangle-mesh box", "Model"), new("CYLINDER", "CYL", "Triangle-mesh cylinder", "Model"), new("SPHERE", "SPH", "Triangle-mesh sphere", "Model"), new("CONE", "CONE", "Triangle-mesh cone", "Model"),
         new("EXTRUDE", "EXT", "Extrude closed XY profiles", "Model"), new("REVOLVE", "REV", "Revolve polyline surface about an axis", "Model"),
         new("DIST", "DI", "Distance between points", "Measure"), new("AREA", "AA", "Selected closed polyline area", "Measure"),
         new("UNDO", "U", "Undo transaction", "Edit"), new("REDO", "REDO", "Redo transaction", "Edit"), new("SELECTALL", "ALL", "Select visible objects", "Edit"),
-        new("ZOOM", "Z", "Zoom extents", "View"), new("TOP", "TOP", "Top drafting view", "View"), new("3DORBIT", "3DO", "3D model viewport", "View"), new("HELP", "?", "List supported commands", "Help")
+        new("ZOOM", "Z", "Zoom extents", "View"), new("TOP", "TOP", "Top drafting view", "View"), new("3DORBIT", "3DO", "3D model viewport", "View"), new("VSCURRENT", "VS", "Set Wireframe, HiddenLine, Shaded or ShadedEdges", "View"),
+        new("PERSPECTIVE", "PERSPECTIVE", "Set 1 for perspective or 0 for orthographic", "View"),
+        new("CLIP3D", "CLIP3D", "Clip at x,y,z,nx,ny,nz; OFF clears the plane", "View"),
+        new("HELP", "?", "List supported commands", "Help")
     };
     public void Cancel() { _active = ""; _points.Clear(); _text = ""; Prompt = "Type a command"; Changed?.Invoke(); }
     public void Start(string command) { Cancel(); Submit(command); }
@@ -53,6 +65,11 @@ public sealed class CommandEngine(CadSession session)
                 _active = definition.Name; Message?.Invoke($"Command: {_active}");
                 switch (_active)
                 {
+                    case "LOFT": Session.LoftSelection(); ViewRequested?.Invoke("3DORBIT"); Cancel(); return;
+                    case "SWEEP": Session.SweepSelection(); ViewRequested?.Invoke("3DORBIT"); Cancel(); return;
+                    case "UNION": Session.BooleanSelection(MeshBooleanOperation.Union); ViewRequested?.Invoke("3DORBIT"); Cancel(); return;
+                    case "SUBTRACT": Session.BooleanSelection(MeshBooleanOperation.Subtract); ViewRequested?.Invoke("3DORBIT"); Cancel(); return;
+                    case "INTERSECT": Session.BooleanSelection(MeshBooleanOperation.Intersect); ViewRequested?.Invoke("3DORBIT"); Cancel(); return;
                     case "UNDO": Session.Document.Undo(); Cancel(); return;
                     case "REDO": Session.Document.Redo(); Cancel(); return;
                     case "ERASE": Session.Erase(); Cancel(); return;
@@ -66,24 +83,42 @@ public sealed class CommandEngine(CadSession session)
                         if (polygons.Length == 0) throw new ArgumentException("Select closed polylines for area measurement.");
                         foreach (var poly in polygons) Message?.Invoke($"Area = {Math.Abs(GeometryMath.SignedArea(EntityGeometry.PolylinePoints(poly))):0.###} square units"); Cancel(); return;
                     case "HATCH":
-                        var hatches = Session.EditableSelection().Select(e => e is PolylineEntity { Closed: true } p ? new HatchEntity(EntityGeometry.PolylinePoints(p)) { Layer = p.Layer } : throw new ArgumentException("Hatch requires closed polylines.")).ToArray();
+                        var hatches = Session.EditableSelection().Select(e => e is PolylineEntity { Closed: true } p ? new HatchEntity(EntityGeometry.PolylinePoints(p)) { Layer = p.Layer, Layout = p.Layout } : throw new ArgumentException("Hatch requires closed polylines.")).ToArray();
                         Session.Document.Add("Hatch", hatches); Cancel(); return;
-                    case "MOVE": case "COPY": case "ROTATE": case "SCALE": case "MIRROR": case "OFFSET": case "ARRAY": case "EXTRUDE": case "REVOLVE": case "BLOCK": case "TRIM": case "EXTEND": case "FILLET": case "CHAMFER": case "BREAK": Session.EditableSelection(); break;
+                    case "MOVE": case "COPY": case "ROTATE": case "SCALE": case "MIRROR": case "OFFSET": case "ARRAY": case "EXTRUDE": case "REVOLVE": case "BLOCK": case "TRIM": case "EXTEND": case "FILLET": case "CHAMFER": case "BREAK": case "ROTATE3D": case "MIRROR3D": case "ALIGN3D": Session.EditableSelection(); break;
                 }
                 UpdatePrompt(); return;
             }
             if (input.Length == 0)
             {
+                if (_active == "3DPOLY" && _points.Count >= 2) Session.Add("3D polyline", new Polyline3DEntity(_points.ToImmutableArray()));
+                if (_active == "SPLINE" && _points.Count >= 2) Session.Add("Spline", AdvancedEditing.ControlSpline(_points));
                 if (_active == "PLINE" && _points.Count >= 2) Session.Add("Polyline", PolylineEntity.FromPoints(_points));
                 Cancel(); return;
             }
-            if (_active == "PLINE" && input.Equals("C", StringComparison.OrdinalIgnoreCase))
+            if (_active is "PLINE" or "3DPOLY" && input.Equals("C", StringComparison.OrdinalIgnoreCase))
             {
                 if (_points.Count < 3) throw new ArgumentException("At least three vertices are required to close the polyline.");
-                Session.Add("Polyline", PolylineEntity.FromPoints(_points, true)); Cancel(); return;
+                Session.Add("Polyline", _active == "3DPOLY" ? new Polyline3DEntity(_points.ToImmutableArray(), true) : PolylineEntity.FromPoints(_points, true)); Cancel(); return;
             }
             if (_active is "BLOCK" or "INSERT" && _text.Length == 0) { _text = input; if (_active == "INSERT" && !Session.Document.Drawing.Blocks.ContainsKey(_text)) throw new ArgumentException("Block not found."); UpdatePrompt(); return; }
             if (_active == "TEXT" && _points.Count == 1) { Session.Add("Text", new TextEntity(_points[0], input, 12)); Cancel(); return; }
+            if (_active == "VSCURRENT")
+            {
+                var styles = new[] { "Wireframe", "HiddenLine", "Shaded", "ShadedEdges" };
+                var style = styles.FirstOrDefault(s => s.Equals(input, StringComparison.OrdinalIgnoreCase)) ?? throw new ArgumentException("Use Wireframe, HiddenLine, Shaded or ShadedEdges.");
+                ViewRequested?.Invoke("STYLE:" + style); Cancel(); return;
+            }
+            if (_active == "PERSPECTIVE") { if (input is not ("0" or "1")) throw new ArgumentException("Use 0 (orthographic) or 1 (perspective)."); ViewRequested?.Invoke("PROJECTION:" + input); Cancel(); return; }
+            if (_active == "CLIP3D")
+            {
+                if (input.Equals("OFF", StringComparison.OrdinalIgnoreCase)) { ViewRequested?.Invoke("CLIP:OFF"); Cancel(); return; }
+                var values = input.Split(',');
+                if (values.Length != 6 || values.Any(v => !GeometryMath.Number(v, out _))) throw new ArgumentException("Enter x,y,z,nx,ny,nz or OFF.");
+                var numbers = values.Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                if (new Vec3(numbers[3], numbers[4], numbers[5]).Length < 1e-12) throw new ArgumentException("A clipping normal cannot be zero.");
+                ViewRequested?.Invoke("CLIP:" + input); Cancel(); return;
+            }
             if (_active == "ARRAY") { Array(input); Cancel(); return; }
             if (GeometryMath.TryParsePoint(input, ReferencePoint ?? default, out var p)) { Point(p); return; }
             if (GeometryMath.Number(input, out var number)) { Number(number); return; }
@@ -91,7 +126,7 @@ public sealed class CommandEngine(CadSession session)
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(ex.Message); Cancel(); }
     }
-    private bool RequiresNumber => _active is "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" && _points.Count == 2);
+    private bool RequiresNumber => _active is "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
     public void Point(Vec3 point)
     {
         if (!IsActive || !point.IsFinite) return;
@@ -104,6 +139,8 @@ public sealed class CommandEngine(CadSession session)
             _points.Add(point);
             switch (_active)
             {
+                case "MIRROR3D" when _points.Count == 3: Session.TransformSelection("Mirror 3D", AdvancedEditing.MirrorPlane(_points[0],_points[1],point)); Cancel(); return;
+                case "ALIGN3D" when _points.Count == 6: Session.TransformSelection("Align 3D", AdvancedEditing.Align(_points[0],_points[1],_points[2],_points[3],_points[4],point)); Cancel(); return;
                 case "POINT": Session.Add("Point", new PointEntity(point)); Cancel(); return;
                 case "LINE" when _points.Count == 2:
                     if (_points[0].DistanceTo(point) > 1e-9) Session.Add("Line", new LineEntity(_points[0], point)); _points.RemoveAt(0); break;
@@ -139,6 +176,7 @@ public sealed class CommandEngine(CadSession session)
                 var major = _points[1] - _points[0];
                 if (Math.Abs(major.Z) > 1e-9 || major.Length <= 1e-9 || value <= 0 || value > major.Length) throw new ArgumentException("Use an XY major axis and a positive minor radius no larger than the major radius.");
                 Session.Add("Ellipse", new EllipseEntity(_points[0], major, value / major.Length)); break;
+            case "ROTATE3D" when _points.Count == 2: Session.TransformSelection("Rotate 3D", Transform3.RotationAxis(_points[1]-_points[0],value,_points[0])); break;
             case "ROTATE" when _points.Count == 1: Session.TransformSelection("Rotate", Transform3.RotationZ(value, _points[0])); break;
             case "SCALE" when _points.Count == 1:
                 if (value <= 0) throw new ArgumentException("Scale must be positive."); Session.TransformSelection("Scale", Transform3.Scaling(new(value, value, value), _points[0])); break;
@@ -153,7 +191,7 @@ public sealed class CommandEngine(CadSession session)
             case "CYLINDER" when _points.Count == 2: Session.Add("Cylinder", MeshFactory.Cylinder(_points[0], _radius, value)); ViewRequested?.Invoke("3DORBIT"); break;
             case "CONE" when _points.Count == 2: Session.Add("Cone", MeshFactory.Cone(_points[0], _radius, value)); ViewRequested?.Invoke("3DORBIT"); break;
             case "REVOLVE" when _points.Count == 2:
-                var meshes = Session.EditableSelection().Select(e => e is PolylineEntity p ? MeshFactory.Revolve(EntityGeometry.PolylinePoints(p), _points[0], _points[1], value) with { Layer = p.Layer } : throw new ArgumentException("Revolve requires polylines.")).ToArray();
+                var meshes = Session.EditableSelection().Select(e => e is PolylineEntity p ? MeshFactory.Revolve(EntityGeometry.PolylinePoints(p), _points[0], _points[1], value) with { Layer = p.Layer, Layout = p.Layout } : throw new ArgumentException("Revolve requires polylines.")).ToArray();
                 Session.Document.Add("Revolve", meshes); ViewRequested?.Invoke("3DORBIT"); break;
             default: throw new ArgumentException("A point is required before the numeric parameter.");
         }
@@ -173,6 +211,13 @@ public sealed class CommandEngine(CadSession session)
     {
         Prompt = _active switch
         {
+            "VSCURRENT" => "Enter Wireframe / HiddenLine / Shaded / ShadedEdges",
+            "PERSPECTIVE" => "Enter 1 for perspective or 0 for orthographic",
+            "CLIP3D" => "Enter point and normal: x,y,z,nx,ny,nz; or OFF",
+            "3DPOLY" => _points.Count == 0 ? "Specify first WCS point" : "Specify next WCS point or Close; Enter to finish",
+            "SPLINE" => "Specify spline control point; Enter to finish",
+            "ROTATE3D" => _points.Count < 2 ? $"Specify axis point {_points.Count + 1}" : "Specify angle in degrees",
+            "ALIGN3D" => $"Specify {(_points.Count < 3 ? "source" : "target")} frame point {_points.Count % 3 + 1}",
             "PLINE" => _points.Count == 0 ? "Specify start point" : "Specify next point or [Close]; Enter to finish",
             "LINE" => _points.Count == 0 ? "Specify first point" : "Specify next point; Enter to finish",
             "CIRCLE" or "SPHERE" or "CYLINDER" or "CONE" => _points.Count == 0 ? "Specify center point" : _points.Count == 1 ? "Specify radius or radius point" : "Specify height",
@@ -202,7 +247,7 @@ public sealed class CommandEngine(CadSession session)
         return _active switch
         {
             "LINE" => [new LineEntity(_points[^1], cursor)],
-            "PLINE" => [PolylineEntity.FromPoints(_points.Append(cursor))],
+            "PLINE" or "3DPOLY" or "SPLINE" => [PolylineEntity.FromPoints(_points.Append(cursor))],
             "RECTANG" or "BOX" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true)],
             "CIRCLE" or "CYLINDER" or "CONE" or "SPHERE" when _points.Count == 1 => [new CircleEntity(a, Math.Max(1e-8, a.DistanceTo(cursor)))],
             "MOVE" or "COPY" => Session.Document.Drawing.Entities.Where(e => Session.Selection.Contains(e.Id)).Select(e => EntityGeometry.Transform(e, Transform3.Translation(cursor - a))).ToArray(),

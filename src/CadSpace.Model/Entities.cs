@@ -11,6 +11,8 @@ public abstract record Entity
     public int ColorIndex { get; init; } = 256;
     public uint? TrueColor { get; init; }
     public double LineWeight { get; init; } = -1;
+    public bool Visible { get; init; } = true;
+    public string Layout { get; init; } = "Model";
     public abstract string Kind { get; }
 }
 public sealed record LineEntity(Vec3 Start, Vec3 End) : Entity { public override string Kind => "LINE"; }
@@ -38,6 +40,7 @@ public sealed record Drawing(ImmutableArray<Entity> Entities, ImmutableDictionar
 {
     public string Name { get; init; } = "Drawing1.dxf";
     public int Units { get; init; } = 4;
+    public ImmutableDictionary<string, string> LayoutBlockNames { get; init; } = ImmutableDictionary.Create<string, string>(StringComparer.OrdinalIgnoreCase).Add("Model", "*Model_Space").Add("Layout1", "*Paper_Space");
     public static Drawing Empty => new([], ImmutableDictionary.Create<string, Layer>(StringComparer.OrdinalIgnoreCase).Add("0", new("0")), ImmutableDictionary.Create<string, BlockDefinition>(StringComparer.OrdinalIgnoreCase));
     public Layer LayerFor(Entity entity) => Layers.TryGetValue(entity.Layer, out var layer) ? layer : Layers["0"];
 }

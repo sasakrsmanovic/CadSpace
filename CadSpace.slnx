@@ -12,5 +12,7 @@
     <Project Path="tests/CadSpace.Tests/CadSpace.Tests.csproj" />
     <Project Path="tests/CadSpace.Exchange.Tests/CadSpace.Exchange.Tests.csproj" />
     <Project Path="tests/CadSpace.Persistence.Tests/CadSpace.Persistence.Tests.csproj" />
+    <Project Path="tests/CadSpace.Advanced.Tests/CadSpace.Advanced.Tests.csproj" />
+    <Project Path="tests/CadSpace.Performance.Tests/CadSpace.Performance.Tests.csproj" />
   </Folder>
 </Solution>

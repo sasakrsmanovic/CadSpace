@@ -1,18 +1,11 @@
-# Contributing to CadSpace
+# Contributing
 
-Keep changes within the smallest reusable layer that owns the behavior. Geometry and document packages must not reference Uno, a browser, or a GPU. Controls must not reference the application project.
+Keep behavior in its owning reusable layer. Geometry/Model/Engine/Dxf must not require Uno; Controls must not reference App. Preserve original records and expose unsupported/lossy conversions.
 
-Run both executable regression suites before opening a pull request:
+Run all five suites as described in README. Generate independent fixtures first with pinned test-only ezdxf 1.4.4. Set `CADSPACE_EXCHANGE_OUTPUT=artifacts/dxf-audit` for the advanced suite, then run `python tests/fixtures/audit.py` with the same environment; audits require zero errors and repairs. Performance tests assert correctness/work bounds, not brittle elapsed-time thresholds.
 
-```sh
-dotnet run --project tests/CadSpace.Tests -c Release
-dotnet run --project tests/CadSpace.Exchange.Tests -c Release
-```
+Build Windows/macOS/Linux and browser targets for UI/rendering changes. Test the published Release output—including trimming and the version-pinned reflective RGBA adapter—not only Debug. Attach screenshots and console output, and state whether the context was physical or software-backed.
 
-For UI work, build both `net10.0-desktop` and `net10.0-browserwasm`. Exercise pointer selection, command-line coordinates, undo, layer locking, and file export. Include screenshots for visual changes and state the operating system, browser, renderer, and whether a physical GPU was used.
+Commands need atomicity, undo/redo, degeneracy, finite-value, layer/layout and selection tests. Index changes need brute-force comparisons and stale-cache tests. Exchange features need independently produced fixtures and preservation tests. Mesh algorithms must not be labeled ACIS/B-rep without implementing that kernel.
 
-Every new command needs atomic-failure tests, undo/redo tests, coordinate and degeneracy tests, and a feature-coverage entry. Every DXF feature needs an independent fixture, read/write/read assertions, and tests protecting unrelated group data. Never silently drop unsupported geometry, metadata, or editing semantics.
-
-Do not label triangle meshes as ACIS solids or claim native AutoCAD compatibility from self-roundtrip tests. Native AutoCAD open/AUDIT/save/reopen qualification is a separate gate. Do not add proprietary assets, commercial-only dependencies, or incompatible licenses.
-
-Release numbers follow semantic versioning. Public API changes must be described in release notes. Tag `vX.Y.Z` to run the release workflow; packages are attached to the GitHub release, not automatically published to NuGet.org.
+Release tags package libraries and distributions on GitHub; they do not automatically publish to NuGet.org, sign or notarize. Native AutoCAD, physical GPU, large-corpus, accessibility and security qualification are separate gates. Never include proprietary assets, credentials or confidential customer drawings.

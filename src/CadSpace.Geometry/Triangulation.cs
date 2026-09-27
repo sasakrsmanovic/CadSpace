@@ -3,6 +3,21 @@ namespace CadSpace.Geometry;
 /// <summary>Ear clipping for simple, planar XY polygons. Holes and self-intersections are explicitly rejected.</summary>
 public static class Triangulation
 {
+    /// <summary>Triangulate a planar polygon in any orientation, retaining its input winding.</summary>
+    public static int[] Polygon3D(IReadOnlyList<Vec3> polygon)
+    {
+        if (polygon.Count < 3) throw new ArgumentException("A face needs three vertices.");
+        var origin = polygon[0]; var normal = Vec3.Zero;
+        for (var i = 1; i + 1 < polygon.Count; i++) normal += (polygon[i] - origin).Cross(polygon[i + 1] - origin);
+        if (normal.Length < 1e-14) throw new ArgumentException("A face has zero area.");
+        var n = normal.Normalized;
+        var extent = Math.Max(1, Bounds3.From(polygon).Size.Length);
+        if (polygon.Any(p => !p.IsFinite || Math.Abs((p - origin).Dot(n)) > extent * 1e-8))
+            throw new ArgumentException("Nonplanar faces need an explicit triangulation.");
+        var x = (polygon[1] - origin).Normalized; var y = n.Cross(x).Normalized;
+        return Polygon(polygon.Select(p => new Vec3((p - origin).Dot(x), (p - origin).Dot(y))).ToArray());
+    }
+
     public static int[] Polygon(IReadOnlyList<Vec3> polygon)
     {
         if (polygon.Count < 3) throw new ArgumentException("A polygon needs at least three vertices.");
