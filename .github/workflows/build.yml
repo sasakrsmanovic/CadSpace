@@ -90,7 +90,7 @@ jobs:
           import zipfile
           with zipfile.ZipFile('artifacts/control-packages/CadSpace.Controls.0.1.0.nupkg') as package:
               print('\n'.join(package.namelist()), flush=True)
-              for target in ('net10.0-desktop', 'net10.0-browserwasm'):
+              for target in ('net10.0-desktop1.0', 'net10.0-browserwasm1.0'):
                   assert f'lib/{target}/CadSpace.Controls.dll' in package.namelist(), target
           PYVERIFY
       - uses: actions/upload-artifact@v4
