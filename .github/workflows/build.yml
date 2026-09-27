@@ -120,6 +120,7 @@ jobs:
           mkdir -p artifacts/server
           ln -s "$PWD/artifacts/site" artifacts/server/CadSpace
           python -m http.server 8177 --bind 127.0.0.1 --directory artifacts/server > artifacts/server.log 2>&1 &
+          python tests/browser/recovery_storage.py
           python tests/browser/smoke.py
       - uses: actions/upload-artifact@v4
         if: always()
@@ -129,6 +130,7 @@ jobs:
             artifacts/browser-smoke
             artifacts/server.log
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: cadspace-browser
           path: artifacts/site

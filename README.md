@@ -9,29 +9,37 @@
 
 CadSpace is an independent C# CAD workspace built with Uno Platform, Skia and OpenGL/WebGL. It combines double-precision drafting, layers and blocks, rational splines, mesh modeling, ASCII/binary DXF exchange, and reusable desktop/browser controls.
 
-> **Development preview—not full AutoCAD parity.** The tools below are implemented within documented boundaries. Mesh modeling is not an analytic ACIS/B-rep kernel; arbitrary DXF editing is not universally lossless. Preserve original drawings, review export warnings, and save a native project before closing or refreshing the application. Automatic crash recovery is not implemented.
+> **Development preview—not full AutoCAD parity.** The tools below are implemented within documented boundaries. Mesh modeling is not an analytic ACIS/B-rep kernel; arbitrary DXF editing is not universally lossless. Preserve original drawings, review export warnings, and save a native project before closing or refreshing the application. Best-effort local recovery checkpoints are written every five seconds when storage is available. They do not replace saved native projects or original-file backups.
 
 ## Workspace
 
-The startup document is an editable studio floor plan. **3D example** opens a separate model study. The custom Uno workspace includes a dense ribbon with stacked command groups, document tabs, command completion/history, cursor-adjacent dynamic input, properties/layers/blocks, model/layout selection, a resizable or hideable Properties palette, and view navigation.
+The startup document is an editable studio floor plan. **3D example** opens a separate model study. The custom Uno workspace includes a dense ribbon with stacked command groups, document tabs, command completion/history, cursor-adjacent dynamic input, editable blue grips, Quick Select, overlap cycling, properties/layers/blocks, model/layout selection, a resizable or hideable Properties palette, and view navigation.
 
 | Area | Available workflows |
 | --- | --- |
 | Drafting | Lines, 2D/3D polylines, rectangles, circles, arcs, ellipses, control-point splines, points, plain text, aligned dimensions and basic hatching |
-| Editing | Move/copy/rotate/scale/mirror; 3D rotation, plane reflection and rigid alignment; offset, arrays, supported explode including bulged segments; line trim/extend/fillet/chamfer/join/break; undo/redo |
+| Editing | Move/copy/rotate/scale/mirror; 3D rotation, plane reflection and rigid alignment; offset, arrays, supported explode including bulged segments; line trim/extend/fillet/chamfer/join/break; crossing STRETCH, supported grip edits; undo/redo |
 | Precision | Absolute/relative/polar coordinates; indexed nested-block/OCS anchors; line intersection/perpendicular and circle/arc tangent snaps; grid, ortho and polar guidance |
 | Organization | Layers, visibility, locking, block definitions/nesting/insertion, separate model and paper-space entity roots |
 | Mesh modeling | Box/cylinder/cone/sphere, extrusion, revolved surfaces, capped matching-profile loft, parallel-transport sweep, bounded closed-mesh union/subtraction/intersection |
 | 3D viewing | Depth-tested shading, feature edges, face/edge/point picking, highlights, world-plane plain text, perspective/orthographic projection, uncapped clipping, pan/orbit and anchored zoom |
-| Files | ASCII and binary DXF, supported code pages and typed geometry, native indexed MESH/SPLINE/HATCH export, original-record preservation, versioned native projects |
+| Files | ASCII and binary DXF, supported code pages and typed geometry, native indexed MESH/SPLINE/HATCH export, original-record preservation, versioned native projects and checksummed local recovery slots |
 
-The registry contains **55 command workflows**. See [Commands](docs/COMMANDS.md) for exact inputs and restrictions. A familiar name does not imply every AutoCAD command option is implemented.
+The registry contains **59 command workflows**. See [Commands](docs/COMMANDS.md) for exact inputs and restrictions. A familiar name does not imply every AutoCAD command option is implemented.
 
 ## Performance work
 
-Immutable scene roots reuse unchanged tessellation. Lazy bounding-volume hierarchies accelerate click picking, 3D ray picking, snap searches and visible-path culling. Selection highlights use a separate GPU attribute stream: selecting an object does not regenerate its geometry buffer. Packed geometry uploads avoid a temporary array per vertex; redraw requests are coalesced and timing-label updates are throttled.
+Immutable scene roots reuse unchanged tessellation. Lazy bounding-volume hierarchies accelerate click picking, 3D ray picking, window/crossing selection, snap searches and visible-path culling. Median partitioning avoids sorting every complete subtree during index construction. Selection highlights use a separate GPU attribute stream: selecting an object does not regenerate its geometry buffer. Packed geometry uploads avoid a temporary array per vertex; redraw requests are coalesced and timing-label updates are throttled. Static drafting and cursor/grip feedback use separate cached Skia elements, and idle 3D pointer movement does not invalidate model rendering. This removes scene re-recording, not all host composition work.
 
-A reproducible 100,000-line benchmark compares 150 warmed indexed picks against a linear scan, verifies identical results, and records both timings in CI. It is **not a whole-application FPS, cold-start, GPU or million-entity scalability claim**. See [methodology and remaining costs](docs/PERFORMANCE.md).
+Reproducible 100,000-line benchmarks include indexed window queries versus the prior full-scene grouping implementation, with matching IDs, allocation counts and separate cold-index timing. A picking benchmark compares 150 warmed indexed picks against a linear scan, verifies identical results, and records both timings in CI. It is **not a whole-application FPS, cold-start, GPU or million-entity scalability claim**. See [methodology and remaining costs](docs/PERFORMANCE.md).
+
+## Precision selection and grips
+
+Click adds to the 2D selection; Shift-click removes and Ctrl-click toggles. Drag left-to-right for a contained window or right-to-left for crossing. Window containment checks a complete root, including block text and triangle children, rather than just whichever child happens to intersect. Enable **SC** for a menu of overlapping roots. Text envelopes are conservative, not exact shaped glyph outlines.
+
+Blue grips are working handles: drag line endpoints/midpoints, circle radius/center, polyline vertices, spline control points, dimension points or insertion points. A ghost preview leaves the document untouched; release commits one undo transaction. Escape or lost capture cancels, and stale/locked objects are rejected. The viewport shows grips for at most 200 selected objects and 4,096 handles. Arc/ellipse grips currently move centers; there is no complete multifunction/3D/subobject grip system.
+
+The ribbon's **Quick Select** opens type/layer filtering with replace/add/remove and current-selection scope. The textual `QSELECT` workflow accepts `LINE,*,Replace,All`. `SELECTSIMILAR` matches kind and layer. `STRETCH` asks for two crossing-window corners, a base point and a displacement point; partial edits affect supported endpoints/control points, while fully contained objects move. See [exact restrictions](docs/COMMANDS.md).
 
 ## Files: Save versus Export
 
@@ -42,6 +50,12 @@ Typed DXF support includes OCS/affine circles, arcs, polylines and ellipses; leg
 Untouched imported records preserve their original groups. An unchanged byte import can return its original bytes, including binary/legacy encoding. Native version 2 retains expanded geometry and DXF provenance; provenance is checked against reparsed source data before raw-record reuse. Basic version 1 projects remain readable.
 
 Unknown entities remain opaque, not invented geometry. Modified compound objects, generated dimensions, sampled boundaries and unmodeled metadata can be lossy or unsupported; review the reports. There is no DWG or ACIS decoder. Native AutoCAD open/AUDIT/save/reopen qualification has not been performed.
+
+### Local drawing recovery
+
+Dirty drawings are checkpointed on a five-second timer after asynchronous storage initialization. Each open document has an independent ID and two alternating native-project slots, with checksums and readback verification. Choose **Recover** after a closed session or browser reload; restored drawings open as unsaved documents. Native save, clean undo state and explicitly discarding a tab clear its checkpoints. Recovery does not persist undo, cameras or tab layout.
+
+Checkpoints are limited to 32 Mi-characters each and at most 256 slots during recovery discovery. Browser eviction/private mode, storage denial, pending filesystem synchronization and edits since the last checkpoint can still lose data. This is best-effort recovery, not a certified crash-safe database or collaborative storage system.
 
 ## Try a drawing
 
@@ -70,6 +84,7 @@ Click a 3D face to select it; drag to orbit. Middle-drag pans, and the wheel zoo
 | Ctrl+Shift+E | ASCII DXF export |
 | Ctrl+Z / Ctrl+Y / Ctrl+A | Undo / redo / select visible entities, respecting active text editing |
 | F2 / Ctrl+1 / F12 | Expanded command history / Properties palette / dynamic input |
+| Ctrl+W in non-text-editing context | Toggle overlap selection cycling; SC is the visible alternative |
 | F3 / F7 / F8 / F9 / F10 | Object snap / grid / ortho / grid snap / polar |
 
 Use **Snap options** to enable individual modes, including perpendicular and tangent. Browser-reserved shortcuts may take precedence; primary operations also have visible controls.
@@ -131,7 +146,7 @@ dotnet run --project tests/CadSpace.Advanced.Tests -c Release
 dotnet run --project tests/CadSpace.Performance.Tests -c Release
 ```
 
-The five executable suites currently contain **169 tests**. CI regenerates independent fixtures and requires zero ezdxf-reported errors **and zero repairs** for tested ASCII/binary exports. This is a synthetic independent-library audit, not Autodesk qualification.
+The five executable suites currently contain **211 tests**. CI regenerates independent fixtures and requires zero ezdxf-reported errors **and zero repairs** for tested ASCII/binary exports. This is a synthetic independent-library audit, not Autodesk qualification.
 
 CI builds three desktop hosts, publishes WebAssembly, packages all six libraries, and exercises rendered browser pixels, selection upload behavior and CAD interactions. Screenshots, diagnostics, source and benchmark output are retained as artifacts. Chromium uses a software-backed graphics context; this does not qualify physical GPU drivers or performance.
 

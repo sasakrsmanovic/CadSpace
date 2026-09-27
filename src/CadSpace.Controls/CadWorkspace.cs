@@ -41,13 +41,13 @@ public sealed class CadStatusBar : UserControl
     public void Toggle(string name)
     {
         if (_session == null) return;
-        switch (name) { case "GRID": _session.GridVisible = !_session.GridVisible; break; case "SNAP": _session.GridSnap = !_session.GridSnap; break; case "ORTHO": _session.Ortho = !_session.Ortho; break; case "POLAR": _session.Polar = !_session.Polar; break; case "OSNAP": _session.ObjectSnap = !_session.ObjectSnap; break; case "DYN": _session.DynamicInput=!_session.DynamicInput; break; }
+        switch (name) { case "GRID": _session.GridVisible = !_session.GridVisible; break; case "SNAP": _session.GridSnap = !_session.GridSnap; break; case "ORTHO": _session.Ortho = !_session.Ortho; break; case "POLAR": _session.Polar = !_session.Polar; break; case "OSNAP": _session.ObjectSnap = !_session.ObjectSnap; break; case "SC": _session.SelectionCycling = !_session.SelectionCycling; break; case "DYN": _session.DynamicInput=!_session.DynamicInput; break; }
         _session.Invalidate(); Refresh();
     }
     private void Refresh()
     {
         if (_session == null) return; _toggles.Children.Clear();
-        foreach (var (name, state) in new[] { ("GRID", _session.GridVisible), ("SNAP", _session.GridSnap), ("ORTHO", _session.Ortho), ("POLAR", _session.Polar), ("OSNAP", _session.ObjectSnap), ("DYN", _session.DynamicInput) })
+        foreach (var (name, state) in new[] { ("GRID", _session.GridVisible), ("SNAP", _session.GridSnap), ("ORTHO", _session.Ortho), ("POLAR", _session.Polar), ("OSNAP", _session.ObjectSnap), ("DYN", _session.DynamicInput), ("SC", _session.SelectionCycling) })
         {
             var button = CadTheme.Button(name, () => Toggle(name)); button.FontSize = 10; button.MinHeight = 25; button.Padding = new Thickness(8, 2, 8, 2); button.Background = CadTheme.Brush(state ? 0xFF345B7B : 0xFF29323D); _toggles.Children.Add(button);
         }
@@ -65,7 +65,7 @@ public sealed class CadStatusBar : UserControl
 }
 
 /// <summary>Composable CAD shell. File persistence and document ownership remain with the hosting app.</summary>
-public sealed class CadWorkspace : UserControl
+public sealed partial class CadWorkspace : UserControl
 {
     public CadRibbon Ribbon { get; } = new();
     public CadViewport Viewport { get; } = new();
@@ -78,6 +78,8 @@ public sealed class CadWorkspace : UserControl
     private CadSession? _session;
     private readonly ComboBox _layoutSelector = new() { MinWidth = 100, MinHeight = 25, FontSize = 10 };
     private bool _updatingLayouts;
+    private CadSpace.Model.Drawing? _layoutDrawing;
+    private string _lastLayout = "";
     private readonly TextBlock _title = CadTheme.Text("CadSpace  —  Drafting & Modeling", 12);
     private readonly ColumnDefinition _paletteColumn = new() { Width = new GridLength(272) };
     private double _paletteWidth = 272;
@@ -93,7 +95,7 @@ public sealed class CadWorkspace : UserControl
         foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE"), ("Export DXF", "EXPORT"), ("Binary DXF", "EXPORT_BINARY") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
         quick.Children.Add(CadTheme.Button("↶", () => _commands?.Start("UNDO"))); quick.Children.Add(CadTheme.Button("↷", () => _commands?.Start("REDO")));
         titlebar.Children.Add(quick); _title.HorizontalAlignment = HorizontalAlignment.Center; Grid.SetColumn(_title, 1); titlebar.Children.Add(_title);
-        var extras = new StackPanel { Orientation = Orientation.Horizontal }; extras.Children.Add(CadTheme.Button("Studio plan", () => FileRequested?.Invoke("STUDIO"))); extras.Children.Add(CadTheme.Button("3D example", () => FileRequested?.Invoke("MODEL"))); extras.Children.Add(CadTheme.Button("Properties",()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();})); extras.Children.Add(CadTheme.Button("About", () => FileRequested?.Invoke("ABOUT"))); Grid.SetColumn(extras, 2); titlebar.Children.Add(extras);
+        var extras = new StackPanel { Orientation = Orientation.Horizontal }; extras.Children.Add(CadTheme.Button("Studio plan", () => FileRequested?.Invoke("STUDIO"))); extras.Children.Add(CadTheme.Button("3D example", () => FileRequested?.Invoke("MODEL"))); extras.Children.Add(CadTheme.Button("Properties",()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();})); extras.Children.Add(CadTheme.Button("Recover", () => FileRequested?.Invoke("RECOVER"))); extras.Children.Add(CadTheme.Button("About", () => FileRequested?.Invoke("ABOUT"))); Grid.SetColumn(extras, 2); titlebar.Children.Add(extras);
         CadTheme.At(root, titlebar, 0); CadTheme.At(root, Ribbon, 1); CadTheme.At(root, DocumentTabs, 2);
         var area = new Grid(); area.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); area.ColumnDefinitions.Add(new() { Width = new GridLength(5) }); area.ColumnDefinitions.Add(_paletteColumn);
         area.Children.Add(Viewport); Grid.SetColumn(Palette, 2); area.Children.Add(Palette);
@@ -105,12 +107,14 @@ public sealed class CadWorkspace : UserControl
         var modelbar = new StackPanel { Orientation = Orientation.Horizontal, Background = CadTheme.Brush(0xFF252C36), Spacing = 4 }; modelbar.Children.Add(CadTheme.Button("MODEL", () => { if (_session != null) _session.ActiveLayout = "Model"; Viewport.Set3D(false); Viewport.Fit(); })); modelbar.Children.Add(CadTheme.Button("3D VIEW", () => Viewport.Set3D(true))); modelbar.Children.Add(_layoutSelector);
         _layoutSelector.SelectionChanged += (_, _) => { if (!_updatingLayouts && _session != null && _layoutSelector.SelectedItem is string layout) { _commands?.Cancel(); _session.ActiveLayout = layout; Viewport.Fit(); } }; CadTheme.At(root, modelbar, 4);
         Ribbon.MinimizedChanged+=minimized=>root.RowDefinitions[1].Height=new GridLength(minimized?28:120);
+        CommandLine.CancelRequested += Viewport.CancelInteraction;
         CommandLine.HistoryExpanded+=expanded=>root.RowDefinitions[5].Height=new GridLength(expanded?202:74);
+        AddShortcut(VirtualKey.W, VirtualKeyModifiers.Control, () => StatusBar.Toggle("SC"), true);
         AddShortcut(VirtualKey.F2,VirtualKeyModifiers.None,CommandLine.ToggleHistory);
         AddShortcut(VirtualKey.F12,VirtualKeyModifiers.None,()=>StatusBar.Toggle("DYN"));
         AddShortcut(VirtualKey.Number1,VirtualKeyModifiers.Control,()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();});
         CadTheme.At(root, CommandLine, 5); CadTheme.At(root, StatusBar, 6); Content = root;
-        Ribbon.CommandRequested += command => { if (_commands == null) return; if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
+        Ribbon.CommandRequested += command => { if (_commands == null) return; if (command == "QSELECT") { ShowQuickSelect(); return; } if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP" or "RENDERSTATS" or "SELECTSIMILAR")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
         Viewport.CoordinatesChanged += StatusBar.SetCoordinates; Viewport.Message += CommandLine.AddMessage; Palette.Message += CommandLine.AddMessage;
         Palette.InsertRequested += name => { Viewport.Set3D(false); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); };
         DocumentTabs.NewRequested += () => FileRequested?.Invoke("NEW");
@@ -118,7 +122,7 @@ public sealed class CadWorkspace : UserControl
         AddShortcut(VirtualKey.Z, VirtualKeyModifiers.Control, () => _commands?.Start("UNDO"), true); AddShortcut(VirtualKey.Y, VirtualKeyModifiers.Control, () => _commands?.Start("REDO"), true); AddShortcut(VirtualKey.A, VirtualKeyModifiers.Control, () => _commands?.Start("SELECTALL"), true);
         AddShortcut(VirtualKey.Delete, VirtualKeyModifiers.None, () => { if (_commands?.Session.Selection.Count > 0) _commands.Start("ERASE"); }, true);
         AddShortcut(VirtualKey.F3, VirtualKeyModifiers.None, () => StatusBar.Toggle("OSNAP")); AddShortcut(VirtualKey.F7, VirtualKeyModifiers.None, () => StatusBar.Toggle("GRID")); AddShortcut(VirtualKey.F8, VirtualKeyModifiers.None, () => StatusBar.Toggle("ORTHO")); AddShortcut(VirtualKey.F9, VirtualKeyModifiers.None, () => StatusBar.Toggle("SNAP")); AddShortcut(VirtualKey.F10, VirtualKeyModifiers.None, () => StatusBar.Toggle("POLAR"));
-        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
+        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { Viewport.CancelInteraction(); _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
         SizeChanged += (_, _) => { ApplyPaletteVisibility(); _title.Visibility = ActualWidth < 1200 ? Visibility.Collapsed : Visibility.Visible; };
     }
     private void AddShortcut(VirtualKey key, VirtualKeyModifiers modifiers, Action action, bool preserveTextEditing = false)
@@ -133,7 +137,9 @@ public sealed class CadWorkspace : UserControl
     }
     private void RefreshLayouts()
     {
-        if (_session == null || _updatingLayouts) return; _updatingLayouts = true;
+        if (_session == null || _updatingLayouts) return;
+        if (ReferenceEquals(_layoutDrawing, _session.Document.Drawing) && _lastLayout == _session.ActiveLayout) return;
+        _layoutDrawing = _session.Document.Drawing; _lastLayout = _session.ActiveLayout; _updatingLayouts = true;
         try { var names = _session.AvailableLayouts.ToArray(); if (_layoutSelector.ItemsSource is not string[] previous || !previous.SequenceEqual(names)) _layoutSelector.ItemsSource = names; _layoutSelector.SelectedItem = _session.ActiveLayout; }
         finally { _updatingLayouts = false; }
     }
@@ -141,7 +147,7 @@ public sealed class CadWorkspace : UserControl
     public void Bind(CadSession session, CommandEngine commands)
     {
         if (_session != null) _session.Changed -= RefreshLayouts;
-        _session = session; _session.Changed += RefreshLayouts; RefreshLayouts();
+        _session = session; _layoutDrawing = null; _session.Changed += RefreshLayouts; RefreshLayouts();
         _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); SetTitle(session.Document.Drawing.Name);
     }
 }

@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased — CAD expansion, performance and workspace
+## Unreleased — selection, grips, recovery and invalidation
+
+Added root-indexed window/crossing selection, whole-root text/face containment, deterministic overlap picking, add/remove/toggle selection, kind/layer Quick Select and Select Similar. Added transactional blue grip dragging with preview/cancel/stale-object guards and bounded crossing STRETCH for supported vertices. The registry contains 59 workflows; unrestricted AutoCAD option parity is not implied.
+
+Separated static drafting from cursor/grip feedback, gated 3D invalidation by drawing/camera/selection state, cached Properties/layout rebuilding, indexed selected entities and replaced recursive full-subtree sorting with median partitioning and bounded fallback. Tests record warmed window-query allocation/time and cold construction separately; RenderOverride counters support real browser invalidation checks.
+
+Added reusable two-slot checksummed recovery journaling and an asynchronous desktop/browser storage adapter. Dirty drawings checkpoint every five seconds when storage is available; recovery opens unsaved documents and does not silently replace files. Payload/discovery limits, browser storage eviction and deferred synchronization remain explicit boundaries. Escape from the command box also cancels captured grip gestures.
+
+211 headless regressions cover these paths alongside the existing geometry/DXF suites. Published-browser checks exercise the new interaction/recovery workflows in addition to the existing 3D/interop pixel tests. See the PR and workflow artifacts for the exact verified revision and results.
+
+## Earlier preview — CAD expansion, performance and workspace
 
 Expanded DXF transport/interpreters to ASCII/code pages and binary R12/R13+, OCS/affine geometry, legacy polylines/meshes, rational splines, supported hatch loops/patterns/islands, compound INSERT display and model/paper separation. Added native MESH/SPLINE/HATCH export and supported ownership/layout reconstruction. Native project v2 retains new geometry and original bytes/provenance, now checked against reparsed source. Corrected MTEXT radians and final orientation precedence.
 

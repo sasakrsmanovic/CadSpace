@@ -25,8 +25,8 @@ public sealed partial class App : Application
         _workspace.FileRequested += ExecuteFile;
         _workspace.DocumentTabs.ActivateRequested += key => Activate((OpenDrawing)key);
         _workspace.DocumentTabs.CloseRequested += async key => await Close((OpenDrawing)key);
+        _workspace.Loaded += (_, _) => { _workspace.CommandLine.FocusInput(); StartRecovery(); };
         Open(SampleDrawings.StudioPlan()); MainWindow.Activate();
-        _workspace.Loaded += (_, _) => _workspace.CommandLine.FocusInput();
     }
     private void Open(Drawing drawing, DxfSource? source = null, bool model = false, string? displayName = null)
     {
@@ -56,6 +56,7 @@ public sealed partial class App : Application
                 case "MODEL": Open(SampleDrawings.ModelStudy(), model: true); break;
                 case "OPEN": await OpenFile(); break;
                 case "SAVE": await SaveProject(); break;
+                case "RECOVER": await RecoverDrawings(); break;
                 case "EXPORT": await ExportDxf(); break;
                 case "EXPORT_BINARY": await ExportDxf(true); break;
                 case "ABOUT":
@@ -96,7 +97,7 @@ public sealed partial class App : Application
         var file = await picker.PickSaveFileAsync(); if (file == null) return;
         var text = CadProjectCodec.Write(drawing, document.Source); await FileIO.WriteTextAsync(file, text);
         document.DisplayName = file.Name;
-        if (document.Session.Document.Drawing == drawing) document.Session.Document.MarkSaved();
+        if (document.Session.Document.Drawing == drawing) { document.Session.Document.MarkSaved(); await ForgetRecovery(document); }
         RefreshTabs(); _workspace!.CommandLine.AddMessage($"Saved {file.Name}. Editable geometry, layers, blocks, and DXF provenance retained.");
     }
     private async Task ExportDxf(bool binary = false)
@@ -124,7 +125,7 @@ public sealed partial class App : Application
                 var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Discard unsaved changes?", Content = $"Changes to {document.DisplayName} have not been saved to a native project. Closing the tab will discard this editing state.", PrimaryButtonText = "Discard", CloseButtonText = "Keep open", DefaultButton = ContentDialogButton.Close };
                 if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             }
-            document.Session.Document.Changed -= RefreshTabs; _documents.Remove(document);
+            document.Session.Document.Changed -= RefreshTabs; _documents.Remove(document); await ForgetRecovery(document);
             if (_documents.Count == 0) Open(Drawing.Empty with { Name = "Drawing1.cadspace" });
             else if (_active == document) Activate(_documents[^1]); else RefreshTabs();
         }
@@ -141,6 +142,9 @@ public sealed partial class App : Application
         public CommandEngine Commands { get; }
         public DxfSource? Source { get; }
         public string DisplayName { get; set; }
+        public Guid RecoveryKey { get; } = Guid.NewGuid();
+        public long RecoveryGeneration { get; set; }
+        public Drawing? Checkpoint { get; set; }
         public OpenDrawing(Drawing drawing, DxfSource? source, string? displayName = null) { Session = new(new CadDocument(drawing)); Commands = new(Session); Source = source; DisplayName = displayName ?? drawing.Name; }
     }
 }

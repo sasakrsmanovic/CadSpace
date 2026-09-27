@@ -50,6 +50,10 @@ public sealed class CadIcon : SKCanvasElement
             case "ROTATE": using (var arc = new SKPath()) { arc.AddArc(new SKRect(5, 5, 27, 27), 20, 285); canvas.DrawPath(arc, p); } Line(22, 4, 21, 12); Line(22, 4, 29, 6); break;
             case "SCALE": Rect(3, 16, 12, 12); Rect(10, 4, 18, 18); Line(14, 19, 27, 5); break;
             case "MIRROR": Line(16, 3, 16, 29); Line(5, 23, 12, 8); Line(20, 8, 27, 23); Line(5, 23, 12, 23); Line(20, 23, 27, 23); break;
+            case "STRETCH": Rect(3, 10, 13, 16); Line(16, 10, 26, 5); Line(16, 26, 26, 21); Line(26, 5, 26, 21); Rect(24, 3, 4, 4); Rect(24, 19, 4, 4); break;
+            case "QSELECT": Line(3, 5, 29, 5); Line(3, 5, 13, 17); Line(29, 5, 19, 17); Line(13, 17, 13, 28); Line(19, 17, 19, 24); Line(13, 28, 19, 24); break;
+            case "SELECTSIMILAR": Rect(3, 4, 12, 12); Rect(18, 19, 11, 11); Line(19, 7, 27, 7); Line(24, 4, 27, 7); Line(24, 10, 27, 7); break;
+            case "RENDERSTATS": Line(4, 4, 4, 28); Line(4, 28, 29, 28); Line(8, 22, 12, 17); Line(12, 17, 18, 21); Line(18, 21, 26, 8); break;
             case "OFFSET": Line(5, 27, 14, 5); Line(14, 27, 23, 5); break;
             case "ERASE": p.Color = new SKColor(234, 174, 179); Line(5, 23, 19, 7); Line(19, 7, 28, 15); Line(28, 15, 16, 28); Line(16, 28, 5, 23); break;
             case "HATCH": Rect(4, 4, 24, 24); for (var i = 7; i < 28; i += 5) Line(5, i, i, 5); break;

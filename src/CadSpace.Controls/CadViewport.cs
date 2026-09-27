@@ -17,7 +17,7 @@ using Windows.System;
 namespace CadSpace.Controls;
 
 /// <summary>Reusable two-dimensional drafting and three-dimensional GPU viewport with no application dependency.</summary>
-public sealed class CadViewport : Grid
+public sealed partial class CadViewport : Grid
 {
     private readonly DraftSurface _draft;
     private readonly CadDynamicInput _dynamic=new();
@@ -44,7 +44,7 @@ public sealed class CadViewport : Grid
     public event Action<bool>? ModeChanged;
     public CadViewport()
     {
-        Background = CadTheme.Brush(0xFF1D242C); _draft = new(this) { IsHitTestVisible = false }; Children.Add(_draft);
+        Background = CadTheme.Brush(0xFF1D242C); _draft = new(this) { IsHitTestVisible = false }; Children.Add(_draft); _overlay = new(this) { IsHitTestVisible = false }; Children.Add(_overlay);
         _viewLabel.Margin = new Thickness(14, 12, 0, 0); _viewLabel.HorizontalAlignment = HorizontalAlignment.Left; _viewLabel.VerticalAlignment = VerticalAlignment.Top; _viewLabel.IsHitTestVisible = false; Children.Add(_viewLabel);
         _metrics.Margin = new Thickness(0, 0, 16, 12); _metrics.HorizontalAlignment = HorizontalAlignment.Right; _metrics.VerticalAlignment = VerticalAlignment.Bottom; _metrics.IsHitTestVisible = false; Children.Add(_metrics);
         var navigation = new StackPanel { Spacing = 5, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 14, 16, 0) };
@@ -61,7 +61,7 @@ public sealed class CadViewport : Grid
         PointerPressed += Pressed; PointerMoved += Moved; PointerReleased += Released; PointerWheelChanged += Wheel;
         PointerEntered += (_, _) => { _inside = true; Redraw(); };
         PointerExited += (_, _) => { _inside = false; Redraw(); };
-        PointerCaptureLost += (_, _) => { _pan = _orbit = _selecting = false; Redraw(); };
+        PointerCaptureLost += (_, _) => { _pan = _orbit = _selecting = false; _gripEntity = null; Redraw(); };
         DoubleTapped += (_, e) => { if (_commands?.IsActive != true) { Fit(); e.Handled = true; } };
         SizeChanged += (_, _) => { Camera.Width = ActualWidth; Camera.Height = ActualHeight; Redraw(); };
     }
@@ -70,7 +70,7 @@ public sealed class CadViewport : Grid
         if (_session != null) _session.Changed -= Redraw;
         if (_commands != null) { _commands.Changed -= Redraw; _commands.ViewRequested -= OnView; }
         _session = session; _commands = commands; session.Changed += Redraw; commands.Changed += Redraw; commands.ViewRequested += OnView;
-        _dynamic.Bind(commands); _fit = true; ClippingPlane = null; Set3D(false); Redraw();
+        _dynamic.Bind(commands); CancelInteraction(); _lastRender = null; _gripDocument = null; _fit = true; ClippingPlane = null; Set3D(false); Redraw();
     }
     public void Fit()
     {
@@ -89,7 +89,7 @@ public sealed class CadViewport : Grid
                 if (_model.IsGLInitialized == false) Fault("The 3D GPU context could not be initialized. The 2D drafting view remains available.");
             });
         }
-        _draft.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        _draft.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible; _overlay.Visibility = _draft.Visibility;
         if (_model != null) _model.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         if (enabled && changed && _session != null) ModelCamera.Fit(_session.Scene.Bounds);
         UpdateViewLabel();
@@ -98,6 +98,7 @@ public sealed class CadViewport : Grid
     private void UpdateViewLabel() => _viewLabel.Text = Is3D ? $"[{(ModelCamera.Orthographic ? "Orthographic" : "Perspective")}]  [{VisualStyle}]  •  click to select, drag to orbit" + (ClippingPlane != null ? "  •  section clipping (uncapped)" : "") : "[Top]  [2D Wireframe]";
     private void OnView(string view)
     {
+        if (view == "RENDERSTATS") { ReportRenderStatistics(); Console.WriteLine($"CADSPACE_HOST_CALLBACKS: scene={_sceneCallbacks}; model={_modelCallbacks}"); return; }
         if (view == "ZOOM") { Fit(); return; }
         if (view.StartsWith("STYLE:")) { VisualStyle = Enum.Parse<ModelVisualStyle>(view[6..], true); _styleSelector.SelectedItem = VisualStyle.ToString(); Set3D(true); }
         else if (view.StartsWith("PROJECTION:")) { ModelCamera.Orthographic = view[11..] == "0"; Set3D(true); }
@@ -119,11 +120,20 @@ public sealed class CadViewport : Grid
     private void DrawPending()
     {
         _dynamic.Refresh();
-        if (Is3D) _model?.Invalidate();
-        else
+        if (_session == null || ActualWidth <= 0 || ActualHeight <= 0) return;
+        Camera.Width = ActualWidth; Camera.Height = ActualHeight;
+        if (_fit && ActualWidth > 100 && ActualHeight > 100) { Camera.Fit(_session.Scene.Bounds); _fit = false; }
+        var stamp = CaptureRenderStamp(ActualWidth, ActualHeight);
+        if (_lastRender != stamp)
         {
-            if (_session != null && Stopwatch.GetElapsedTime(_lastMetricUpdate).TotalMilliseconds>250) { _lastMetricUpdate=Stopwatch.GetTimestamp(); _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   previous CPU draw {_lastCpuDrawMilliseconds:0.0} ms"; }
-            _draft.Invalidate();
+            _lastRender = stamp;
+            if (Is3D) _model?.Invalidate(); else _draft.Invalidate();
+        }
+        if (!Is3D) _overlay.Invalidate();
+        if (!Is3D && Stopwatch.GetElapsedTime(_lastMetricUpdate).TotalMilliseconds > 250)
+        {
+            _lastMetricUpdate = Stopwatch.GetTimestamp();
+            _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   scene {_sceneDraws}   •   overlay {_overlayDraws}   •   previous CPU recording {_lastCpuDrawMilliseconds:0.0} ms";
         }
     }
     private void Fault(string message) => DispatcherQueue.TryEnqueue(() => { Message?.Invoke(message); Set3D(false); });
@@ -142,7 +152,7 @@ public sealed class CadViewport : Grid
             else
             {
                 var menu=new MenuFlyout();
-                foreach(var name in new[]{"MOVE","COPY","ERASE","SELECTALL","ZOOM","UNDO","REDO"})
+                foreach(var name in new[]{"MOVE","COPY","STRETCH","ERASE","SELECTSIMILAR","SELECTALL","ZOOM","UNDO","REDO"})
                 {var item=new MenuFlyoutItem{Text=name};item.Click+=(_,_)=>_commands.Start(name);menu.Items.Add(item);}
                 menu.ShowAt(this,new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions{Position=current.Position});
             }
@@ -151,6 +161,8 @@ public sealed class CadViewport : Grid
         _pan = current.Properties.IsMiddleButtonPressed; _orbit = Is3D && !_commands.IsActive && current.Properties.IsLeftButtonPressed;
         if (_pan || _orbit) { CapturePointer(e.Pointer); e.Handled = true; return; }
         if (!current.Properties.IsLeftButtonPressed) return;
+        if (!_commands.IsActive && !e.KeyModifiers.HasFlag(VirtualKeyModifiers.Shift) && TryBeginGrip(current.Position))
+        { CapturePointer(e.Pointer); e.Handled = true; return; }
         if (_commands.IsActive)
         {
             _snap = _session.Snap(_pressWorld, 9 / Camera.PixelsPerUnit, _commands.ReferencePoint); _cursor = _snap.Point; _commands.PickTolerance = 7 / Camera.PixelsPerUnit; _commands.Point(_snap.Point);
@@ -166,11 +178,23 @@ public sealed class CadViewport : Grid
         if (_pan) { if (Is3D) ModelCamera.Pan(dx, dy, ActualHeight); else Camera.Pan(dx, dy); }
         if (_orbit && (Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5 || _dragged)) { _dragged = true; ModelCamera.Orbit(dx, dy); }
         if (_selecting && Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5) _dragged = true;
+        if (_gripEntity != null)
+        {
+            MoveGripPointer(p); CoordinatesChanged?.Invoke(_cursor); Redraw(); return;
+        }
+        _hotGrip = !Is3D && !_commands.IsActive && !_selecting && !_pan ? FindGrip(p) : -1;
         var world = World(p); _snap = _commands.IsActive ? _session.Snap(world, 9 / Camera.PixelsPerUnit, _commands.ReferencePoint) : new(world, SnapKind.None);
         _cursor = _snap.Point; _dynamic.Position(p.X,p.Y,ActualWidth,ActualHeight,_cursor); CoordinatesChanged?.Invoke(_cursor); Redraw();
     }
     private void Released(object sender, PointerRoutedEventArgs e)
     {
+        if (_gripEntity != null)
+        {
+            try { MoveGripPointer(e.GetCurrentPoint(this).Position); if (_dragged) _session?.MoveGrip(_gripEntity, _gripIndex, _cursor); }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(error.Message); }
+            finally { _gripEntity = null; _dragged = false; ReleasePointerCapture(e.Pointer); Redraw(); }
+            e.Handled = true; return;
+        }
         if (_session != null && _orbit && !_dragged)
         {
             var point = e.GetCurrentPoint(this).Position;
@@ -180,9 +204,10 @@ public sealed class CadViewport : Grid
         }
         if (_session != null && _selecting)
         {
-            var point = e.GetCurrentPoint(this).Position; var world = World(point); var additive = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Shift) || e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control);
-            if (_dragged) _session.SelectWindow(_pressWorld, world, point.X < _pressScreen.X, additive);
-            else _session.Select(_session.HitTest(world, 6 / Camera.PixelsPerUnit), additive);
+            var point = e.GetCurrentPoint(this).Position; var world = World(point);
+            var mode = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Shift) ? SelectionMode.Remove : e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control) ? SelectionMode.Toggle : SelectionMode.Add;
+            if (_dragged) _session.SelectWindow(_pressWorld, world, point.X < _pressScreen.X, mode);
+            else SelectAt(world, point, mode);
         }
         _pan = _orbit = _selecting = _dragged = false; ReleasePointerCapture(e.Pointer); Redraw(); e.Handled = true;
     }
@@ -191,43 +216,5 @@ public sealed class CadViewport : Grid
         var p = e.GetCurrentPoint(this); var factor = Math.Pow(1.18, p.Properties.MouseWheelDelta / 120.0);
         if (Is3D) ModelCamera.ZoomAt(factor, p.Position.X, p.Position.Y, ActualWidth, ActualHeight); else Camera.Zoom(factor, p.Position.X, p.Position.Y);
         Redraw(); e.Handled = true;
-    }
-    private sealed class DraftSurface(CadViewport owner) : SKCanvasElement
-    {
-        private readonly SkiaDraftRenderer _renderer = new();
-        protected override void RenderOverride(SKCanvas canvas, Size area)
-        {
-            var session = owner._session; if (session == null) return;
-            owner.Camera.Width = area.Width; owner.Camera.Height = area.Height;
-            if (owner._fit && area.Width > 100 && area.Height > 100) { owner.Camera.Fit(session.Scene.Bounds); owner._fit = false; }
-            var start = Stopwatch.GetTimestamp(); _renderer.Render(canvas, owner.Camera, session.Scene, session.Selection, session.GridVisible, session.GridSpacing);
-            if (owner._commands?.IsActive == true)
-            {
-                try
-                {
-                    var preview = owner._commands.Preview(owner._cursor);
-                    if (preview.Count > 0) _renderer.DrawScene(canvas, owner.Camera, EntityGeometry.BuildScene(session.Document.Drawing with { Entities = preview.Select(e => e with { Layout = session.ActiveLayout }).ToImmutableArray() }, session.ActiveLayout), new HashSet<Guid>(), true);
-                }
-                catch (NotSupportedException) { /* A preview must never invalidate a valid drawing. */ }
-            }
-            _renderer.DrawInteraction(canvas, owner.Camera, owner._cursor, owner._inside, owner._snap.Kind is SnapKind.None or SnapKind.Grid ? null : owner._snap.Kind.ToString(), owner._selecting && owner._dragged ? owner._pressWorld : null);
-            owner._lastCpuDrawMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        }
-    }
-    private sealed class ModelSurface(CadViewport owner) : GLCanvasElement(null)
-    {
-        private readonly GlSceneRenderer _renderer = new();
-        protected override void Init(GL gl)
-        {
-            try { _renderer.Initialize(gl); owner.DispatcherQueue.TryEnqueue(() => owner._metrics.Text = $"GPU  •  {_renderer.Device}"); }
-            catch (Exception error) { owner.Fault($"3D renderer initialization failed: {error.Message}"); throw; }
-        }
-        protected override void RenderOverride(GL gl)
-        {
-            if (owner._session == null) return;
-            try { _renderer.Render(gl, owner._session.Scene, owner.ModelCamera, ActualWidth, ActualHeight, owner._session.Selection, owner.VisualStyle, owner.ClippingPlane); }
-            catch (Exception error) { owner.Fault($"3D renderer error: {error.Message}"); }
-        }
-        protected override void OnDestroy(GL gl) => _renderer.Destroy(gl);
     }
 }

@@ -15,6 +15,9 @@ public sealed class CadPalette : UserControl
     private CadSession? _session;
     private string _tab = "Properties";
     private bool _building;
+    private Drawing? _builtDrawing;
+    private long _builtSelection = -1;
+    private string _builtTab = "", _builtLayer = "";
     public event Action<string>? Message;
     public event Action<string>? InsertRequested;
     public CadPalette()
@@ -26,11 +29,13 @@ public sealed class CadPalette : UserControl
     }
     public void Bind(CadSession session)
     {
-        if (_session != null) _session.Changed -= Refresh; _session = session; session.Changed += Refresh; Refresh();
+        if (_session != null) _session.Changed -= Refresh; _session = session; _builtDrawing = null; session.Changed += Refresh; Refresh();
     }
     public void Refresh()
     {
         if (_session == null || _building) return;
+        if (ReferenceEquals(_builtDrawing, _session.Document.Drawing) && _builtSelection == _session.SelectionRevision && _builtTab == _tab && _builtLayer == _session.CurrentLayer) return;
+        _builtDrawing = _session.Document.Drawing; _builtSelection = _session.SelectionRevision; _builtTab = _tab; _builtLayer = _session.CurrentLayer;
         _building = true;
         try { _body.Children.Clear(); if (_tab == "Layers") Layers(); else if (_tab == "Blocks") Blocks(); else Properties(); }
         finally { _building = false; }
@@ -51,7 +56,7 @@ public sealed class CadPalette : UserControl
     }
     private void Try(Action edit)
     {
-        try { edit(); } catch (Exception error) when (error is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(error.Message); Refresh(); }
+        try { edit(); } catch (Exception error) when (error is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(error.Message); _builtDrawing = null; Refresh(); }
     }
     private void Update(Entity entity, Func<Entity, Entity> update)
     {
@@ -63,14 +68,14 @@ public sealed class CadPalette : UserControl
     private static Vec3 Point(string value) => GeometryMath.TryParsePoint(value, default, out var p) ? p : throw new ArgumentException("Enter x,y or x,y,z.");
     private void Properties()
     {
-        var session = _session!; var selected = session.Document.Drawing.Entities.Where(e => session.Selection.Contains(e.Id)).ToArray();
+        var session = _session!; var selected = session.SelectedEntities();
         _body.Children.Add(CadTheme.Text(selected.Length == 0 ? "No selection" : selected.Length == 1 ? selected[0].Kind : $"{selected.Length} objects selected", 14));
         Heading("General");
         if (selected.Length == 0)
         {
             Field("Drawing", session.Document.Drawing.Name); Field("Objects", session.Document.Drawing.Entities.Length.ToString()); Field("Layers", session.Document.Drawing.Layers.Count.ToString()); Field("Blocks", session.Document.Drawing.Blocks.Count.ToString());
             Field("Current layer", session.CurrentLayer); Heading("Drafting"); Field("Grid spacing", session.GridSpacing.ToString(CultureInfo.InvariantCulture), value => { var n = Number(value); if (n <= 0) throw new ArgumentException("Spacing must be positive."); session.GridSpacing = n; session.Invalidate(); });
-            _body.Children.Add(new TextBlock { Text = "Click an object to inspect it.\n\nDrag left to right for a window selection. Drag right to left for a crossing selection. Shift adds or removes objects.\n\nMiddle-drag pans. The mouse wheel zooms about the pointer.", TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = CadTheme.Brush(CadTheme.Muted), Margin = new Thickness(0, 20, 0, 0) }); return;
+            _body.Children.Add(new TextBlock { Text = "Click an object to inspect it.\n\nDrag left to right for a window selection. Drag right to left for a crossing selection. Click adds; Shift removes; Ctrl toggles. Drag a blue grip to edit.\n\nMiddle-drag pans. The mouse wheel zooms about the pointer.", TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = CadTheme.Brush(CadTheme.Muted), Margin = new Thickness(0, 20, 0, 0) }); return;
         }
         var editable = !selected.Any(e => e is OpaqueEntity || session.Document.Drawing.LayerFor(e).Locked);
         var layer = new ComboBox { ItemsSource = session.Document.Drawing.Layers.Keys.OrderBy(x => x).ToArray(), SelectedItem = selected[0].Layer, FontSize = 11, MinHeight = 28, HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = editable };
