@@ -5,6 +5,9 @@
     <UnoSingleProject>true</UnoSingleProject><OutputType>Library</OutputType><GenerateLibraryLayout>true</GenerateLibraryLayout>
     <UnoFeatures>SkiaRenderer;GLCanvas;</UnoFeatures><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-browserwasm' and '$(Configuration)' == 'Release' and '$(CadSpaceUntrimmed)' != 'true'">
+    <UnoXamlResourcesTrimming>true</UnoXamlResourcesTrimming>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../CadSpace.Engine/CadSpace.Engine.csproj" />
     <ProjectReference Include="../CadSpace.Rendering/CadSpace.Rendering.csproj" />

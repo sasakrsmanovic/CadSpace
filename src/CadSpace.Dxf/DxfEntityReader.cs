@@ -43,7 +43,11 @@ internal static class DxfEntityReader
                 entity = InPlane(StyledText(header, warn)); break;
             case "MTEXT":
                 var text = Text(header, true, warn);
-                var direction = P(header, 11, ocs.Vector(GeometryMath.OnCircle(default, 1, N(header, 50))));
+                // MTEXT rotation is radians; the last direction/rotation field wins (Autodesk DXF reference).
+                var direction = ocs.X; var index50=-1; var index11=-1;
+                for(var i=0;i<header.Length;i++){if(header[i].Code==75)break;if(header[i].Code==50)index50=i;if(header[i].Code==11)index11=i;}
+                if(index50>index11)direction=ocs.Vector(GeometryMath.OnCircle(default,1,GeometryMath.Degrees(Number(header[index50].Value))));
+                else if(index11>=0)direction=P(header.Skip(index11).ToImmutableArray(),11,ocs.X);
                 var up = normal.Normalized.Cross(direction).Normalized;
                 var frame = new Transform3(direction.Normalized, up, normal.Normalized, P(header, 10));
                 entity = new PlacedEntity(text with { Position = default, Rotation = 0 }, frame); break;

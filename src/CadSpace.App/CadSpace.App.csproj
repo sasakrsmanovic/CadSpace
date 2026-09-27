@@ -9,6 +9,12 @@
     <UnoFeatures>SkiaRenderer;GLCanvas;</UnoFeatures><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WasmShellWebAppBasePath>./</WasmShellWebAppBasePath><WasmShellILLinkerEnabled>false</WasmShellILLinkerEnabled><PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-browserwasm' and '$(Configuration)' == 'Release' and '$(CadSpaceUntrimmed)' != 'true'">
+    <PublishTrimmed>true</PublishTrimmed>
+    <WasmShellILLinkerEnabled>true</WasmShellILLinkerEnabled>
+    <UnoXamlResourcesTrimming>true</UnoXamlResourcesTrimming>
+    <WasmShellEnableJiterpreter>true</WasmShellEnableJiterpreter>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../CadSpace.Controls/CadSpace.Controls.csproj" />
     <ProjectReference Include="../CadSpace.Dxf/CadSpace.Dxf.csproj" />

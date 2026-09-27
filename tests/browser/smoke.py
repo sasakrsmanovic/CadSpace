@@ -1,73 +1,65 @@
-"""Exercise the published Uno app; require visible shaded geometry, never accept a 2D fallback."""
-import asyncio
-import json
-import os
+"""Exercise real published-app rendering and CAD UI behavior; retain screenshots on failure."""
+import asyncio,json,os,re
 from pathlib import Path
 from playwright.async_api import async_playwright
 from PIL import Image
 
-async def main():
-    output = Path("artifacts/browser-smoke")
-    output.mkdir(parents=True, exist_ok=True)
-    events = []
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True, args=[
-            "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"
-        ])
-        page = await browser.new_page(viewport={"width": 1600, "height": 1000}, device_scale_factor=1)
-        page.on("console", lambda message: events.append({"type": message.type, "text": message.text}))
-        page.on("pageerror", lambda error: events.append({"type": "pageerror", "text": str(error)}))
-        page.on("requestfailed", lambda request: events.append({"type": "requestfailed", "url": request.url, "error": request.failure}))
-        async def command(*values):
-            for value in values:
-                await page.keyboard.type(value)
-                await page.keyboard.press("Enter")
-            await page.wait_for_timeout(400)
-        try:
-            await page.goto(os.environ.get("CADSPACE_URL", "http://127.0.0.1:8177/CadSpace/"), wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_function("document.title.includes('CadSpace')", timeout=90000)
-            await page.locator("canvas").first.wait_for(state="visible", timeout=30000)
-            await page.wait_for_timeout(3000)
-            await page.screenshot(path=str(output / "01-drafting.png"), full_page=True)
-            (output / "body.txt").write_text(await page.locator("body").inner_text(), encoding="utf-8")
-            (output / "dom.html").write_text(await page.content(), encoding="utf-8")
-            await command("CIRCLE", "100,100", "25")
-            assert "*" in await page.title(), "A command must dirty the active document"
-            await command("UNDO")
-            assert "*" not in await page.title(), "Undo must restore the saved initial document"
-            await page.keyboard.press("Control+n")
-            await page.wait_for_timeout(500)
-            await command("BOX", "0,0", "200,120", "80")
-            assert "*" in await page.title(), "Mesh creation must change the drawing"
-            await page.wait_for_timeout(2500)
-            await page.screenshot(path=str(output / "02-mesh.png"), full_page=True)
-            await page.mouse.move(650, 400)
-            await page.mouse.down()
-            await page.mouse.move(780, 450, steps=12)
-            await page.mouse.up()
-            await page.mouse.wheel(0, -240)
-            await page.wait_for_timeout(600)
-            await page.screenshot(path=str(output / "03-orbit.png"), full_page=True)
-            messages = "\n".join(event.get("text", "") for event in events)
-            assert "CADSPACE_GPU_FRAME: triangles=12" in messages, "The GPU renderer must draw the box's twelve triangles"
-            for forbidden in ("readPixels: invalid", "glReadPixels: Invalid", "could not be initialized", "framebuffer readback failed"):
-                assert forbidden.lower() not in messages.lower(), f"Rendering failed: {messages}"
-            assert "CADSPACE_READBACK: RGBA" in messages, "Portable readback must be installed"
-            image = Image.open(output / "02-mesh.png").convert("RGB")
-            roi = image.crop((200, 240, 1120, 760))
-            filled = sum(1 for r,g,b in roi.getdata() if min(r,g,b) > 75 and max(r,g,b) - min(r,g,b) < 55)
-            assert filled > 15000, f"Expected shaded box pixels, got {filled}; a draw-call log is insufficient"
-            before = image.crop((200, 240, 1120, 760))
-            after = Image.open(output / "03-orbit.png").convert("RGB").crop((200, 240, 1120, 760))
-            changed = sum(1 for a,b in zip(before.getdata(), after.getdata()) if sum(abs(x-y) for x,y in zip(a,b)) > 45)
-            assert changed > 5000, f"Orbit/zoom must change rendered geometry, only {changed} pixels changed"
-            assert "3D renderer initialization failed" not in messages, messages
-            errors = [event for event in events if event["type"] == "pageerror"]
-            assert not errors, f"Unhandled browser errors: {errors}"
-            print(f"PASS browser startup, editing, undo, visible mesh ({filled} pixels) and orbit ({changed} changed pixels)")
-        finally:
-            await page.screenshot(path=str(output / "last-state.png"), full_page=True)
-            (output / "console.json").write_text(json.dumps(events, indent=2), encoding="utf-8")
-            await browser.close()
+ROI=(200,240,1120,760)
+def crop(path):return Image.open(path).convert('RGB').crop(ROI)
+def filled(image):return sum(min(r,g,b)>75 and max(r,g,b)-min(r,g,b)<55 for r,g,b in image.getdata())
+def difference(a,b):return sum(sum(abs(x-y) for x,y in zip(p,q))>45 for p,q in zip(a.getdata(),b.getdata()))
 
+async def main():
+    output=Path('artifacts/browser-smoke');output.mkdir(parents=True,exist_ok=True);events=[]
+    async with async_playwright() as p:
+        browser=await p.chromium.launch(headless=True,args=['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
+        page=await browser.new_page(viewport={'width':1600,'height':1000},device_scale_factor=1)
+        page.on('console',lambda m:events.append({'type':m.type,'text':m.text}))
+        page.on('pageerror',lambda e:events.append({'type':'pageerror','text':str(e)}))
+        page.on('requestfailed',lambda r:events.append({'type':'requestfailed','url':r.url,'error':r.failure}))
+        async def command(*values):
+            await page.mouse.click(300,956)
+            for value in values:await page.keyboard.type(value);await page.keyboard.press('Enter')
+            await page.wait_for_timeout(500)
+        async def shot(name):
+            await page.screenshot(path=str(output/name),full_page=True);return crop(output/name)
+        try:
+            await page.goto(os.environ.get('CADSPACE_URL','http://127.0.0.1:8177/CadSpace/'),wait_until='domcontentloaded',timeout=60000)
+            await page.wait_for_function("document.title.includes('CadSpace')",timeout=90000)
+            await page.locator('canvas').first.wait_for(state='visible',timeout=30000);await page.wait_for_timeout(3000)
+            await shot('01-workspace.png')
+            await page.mouse.click(300,956);await page.keyboard.type('CIR');await page.keyboard.press('Tab');await page.keyboard.press('Enter')
+            await command('100,100','25');assert '*' in await page.title(),'Completion and circle command must edit the document'
+            await command('UNDO');assert '*' not in await page.title()
+            await page.keyboard.press('Control+n');await page.wait_for_timeout(500)
+            await command('BOX','0,0','200,120','80');await page.wait_for_timeout(2000)
+            mesh=await shot('02-shaded.png');assert filled(mesh)>15000,'Expected visible shaded mesh, not a fallback'
+            logs=lambda:'\n'.join(e.get('text','') for e in events)
+            before=re.findall(r'CADSPACE_GPU_UPLOADS: geometry=(\d+)',logs())[-1]
+            await page.mouse.click(650,520);await page.wait_for_timeout(600);selected=await shot('03-selected.png')
+            blue=sum(b-r>55 and b-g>20 and b>100 for r,g,b in selected.getdata());assert blue>10000,'Mesh must highlight after face picking'
+            assert re.findall(r'CADSPACE_GPU_UPLOADS: geometry=(\d+)',logs())[-1]==before,'Selection must not upload geometry again'
+            await page.mouse.click(230,280)
+            await command('VSCURRENT','Wireframe');wire=await shot('04-wireframe.png');assert filled(wire)<filled(mesh)*.1
+            await command('VSCURRENT','HiddenLine');hidden=await shot('05-hidden-line.png');assert difference(wire,hidden)>100
+            await command('VSCURRENT','Shaded');shaded=await shot('06-shaded-only.png');assert filled(shaded)>15000
+            await command('VSCURRENT','ShadedEdges','PERSPECTIVE','0');ortho=await shot('07-orthographic.png');assert difference(mesh,ortho)>2000
+            await command('CLIP3D','0,0,40,0,0,1');clipped=await shot('08-clipped.png');assert filled(clipped)<filled(ortho)*.8
+            await command('CLIP3D','OFF','PERSPECTIVE','1')
+            await command('TEXT','80,60,160','GPU LABEL');text=await shot('09-text.png')
+            assert 'CADSPACE_GPU_TEXT: labels=1' in logs();assert difference(mesh,text)>50
+            await command('UNDO');before_image=await shot('10-restored.png')
+            await page.mouse.move(650,400);await page.mouse.down();await page.mouse.move(780,450,steps=12);await page.mouse.up();await page.mouse.wheel(0,-240);await page.wait_for_timeout(600)
+            assert difference(before_image,await shot('11-orbit.png'))>5000
+            await page.keyboard.press('F2');await page.wait_for_timeout(200);await shot('12-command-history.png');await page.keyboard.press('F2')
+            await page.keyboard.press('Control+1');await page.wait_for_timeout(200);await shot('13-palette-hidden.png');await page.keyboard.press('Control+1')
+            await command('TOP','LINE');await page.mouse.move(450,380);await page.wait_for_timeout(200);await shot('14-dynamic-input.png');await page.keyboard.press('Escape')
+            for marker in ('CADSPACE_READBACK: RGBA','CADSPACE_GPU_FRAME: triangles=12','CADSPACE_PICK: count=1'):assert marker in logs(),marker
+            for forbidden in ('readPixels: invalid','glReadPixels: Invalid','could not be initialized','framebuffer readback failed','3D renderer error','3D renderer initialization failed'):assert forbidden.lower() not in logs().lower(),logs()
+            assert not [e for e in events if e['type']=='pageerror'],logs()
+            print('PASS rendered workspace, completion, editing, mesh pixels, indexed picking, selection-only uploads, visual styles, clipping, GPU text, projection, orbit, history, palette and dynamic prompts')
+        finally:
+            await page.screenshot(path=str(output/'last-state.png'),full_page=True)
+            (output/'console.json').write_text(json.dumps(events,indent=2),encoding='utf-8')
+            await browser.close()
 asyncio.run(main())

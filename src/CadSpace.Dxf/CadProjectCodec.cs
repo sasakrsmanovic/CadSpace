@@ -67,6 +67,16 @@ public static class CadProjectCodec
                 if (!savedGraph.Entities.Select(e => e.Id).SequenceEqual(original.Entities.Select(e => e.Id)) ||
                     savedGraph.Blocks.Count != original.Blocks.Count || savedGraph.Blocks.Any(b => !original.Blocks.TryGetValue(b.Key, out var old) || !b.Value.Entities.Select(e => e.Id).SequenceEqual(old.Entities.Select(e => e.Id))))
                     throw new FormatException("Inconsistent source provenance graph.");
+                // Never trust serialized provenance as evidence that edited geometry matches raw DXF.
+                if(savedGraph.Units!=original.Units || savedGraph.Layers.Count!=original.Layers.Count || savedGraph.Layers.Any(p=>!original.Layers.TryGetValue(p.Key,out var layer)||layer!=p.Value) ||
+                   savedGraph.LayoutBlockNames.Count!=original.LayoutBlockNames.Count || savedGraph.LayoutBlockNames.Any(p=>!original.LayoutBlockNames.TryGetValue(p.Key,out var value)||value!=p.Value))
+                    throw new FormatException("Provenance tables do not match original DXF.");
+                for(var i=0;i<original.Entities.Length;i++) VerifySourceEntity(original.Entities[i],savedGraph.Entities[i]);
+                foreach(var (name,block) in original.Blocks)
+                {
+                    var saved=savedGraph.Blocks[name]; if(block.BasePoint!=saved.BasePoint)throw new FormatException("Provenance block base point differs from DXF.");
+                    for(var i=0;i<block.Entities.Length;i++)VerifySourceEntity(block.Entities[i],saved.Entities[i]);
+                }
                 CadDocument.Validate(savedGraph); original = savedGraph;
             }
             source = new(parsed.Source.Text, original, parsed.Source.Sections, parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value)) { OriginalBytes = parsed.Source.OriginalBytes };
@@ -74,6 +84,18 @@ public static class CadProjectCodec
             drawing = Intern(drawing, original);
         }
         CadDocument.Validate(drawing); return new(drawing, source);
+    }
+    private static Entity VerifySourceEntity(Entity actual,Entity saved)
+    {
+        actual=actual with{Id=saved.Id};
+        if(actual is PlacedEntity a && saved is PlacedEntity b) actual=a with{Geometry=VerifySourceEntity(a.Geometry,b.Geometry)};
+        if(actual is CompositeEntity x && saved is CompositeEntity y)
+        {
+            if(x.Children.Length!=y.Children.Length)throw new FormatException("Provenance child counts differ from DXF.");
+            actual=x with{Children=x.Children.Zip(y.Children).Select(p=>VerifySourceEntity(p.First,p.Second)).ToImmutableArray()};
+        }
+        if(!Equivalent(actual,saved))throw new FormatException("Provenance geometry differs from the original DXF. Refusing unsafe source-record reuse.");
+        return saved;
     }
     private static Drawing Intern(Drawing drawing, Drawing original)
     {
