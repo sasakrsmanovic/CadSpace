@@ -1,5 +1,5 @@
 # CadSpace
 
-A modular CAD workspace built with Uno Platform and GPU rendering. The implementation, automated tests, desktop/browser builds, and feature-coverage documentation are being added in the following commits.
+Modular CAD for desktop and browser, built with Uno Platform. Geometry, document storage, DXF exchange, editing, rendering, and controls are independently reusable.
 
-CadSpace is an independent application. It is not Autodesk AutoCAD and does not include Autodesk code, assets, or proprietary modeling components.
+The first implementation is under active construction. CadSpace is an independent application, not Autodesk AutoCAD. See the feature coverage document for implemented functionality and limitations.
