@@ -1,9 +1,10 @@
-"""Exercise the published Uno app; require mesh rendering rather than silently accepting a 2D fallback."""
+"""Exercise the published Uno app; require visible shaded geometry, never accept a 2D fallback."""
 import asyncio
 import json
 import os
 from pathlib import Path
 from playwright.async_api import async_playwright
+from PIL import Image
 
 async def main():
     output = Path("artifacts/browser-smoke")
@@ -49,11 +50,21 @@ async def main():
             await page.screenshot(path=str(output / "03-orbit.png"), full_page=True)
             messages = "\n".join(event.get("text", "") for event in events)
             assert "CADSPACE_GPU_FRAME: triangles=12" in messages, "The GPU renderer must draw the box's twelve triangles"
-            assert "glReadPixels: Invalid" not in messages, "Framebuffer readback failed; a 2D fallback is not a successful 3D test"
+            for forbidden in ("readPixels: invalid", "glReadPixels: Invalid", "could not be initialized", "framebuffer readback failed"):
+                assert forbidden.lower() not in messages.lower(), f"Rendering failed: {messages}"
+            assert "CADSPACE_READBACK: RGBA" in messages, "Portable readback must be installed"
+            image = Image.open(output / "02-mesh.png").convert("RGB")
+            roi = image.crop((200, 240, 1120, 760))
+            filled = sum(1 for r,g,b in roi.getdata() if min(r,g,b) > 75 and max(r,g,b) - min(r,g,b) < 55)
+            assert filled > 15000, f"Expected shaded box pixels, got {filled}; a draw-call log is insufficient"
+            before = image.crop((200, 240, 1120, 760))
+            after = Image.open(output / "03-orbit.png").convert("RGB").crop((200, 240, 1120, 760))
+            changed = sum(1 for a,b in zip(before.getdata(), after.getdata()) if sum(abs(x-y) for x,y in zip(a,b)) > 45)
+            assert changed > 5000, f"Orbit/zoom must change rendered geometry, only {changed} pixels changed"
             assert "3D renderer initialization failed" not in messages, messages
             errors = [event for event in events if event["type"] == "pageerror"]
             assert not errors, f"Unhandled browser errors: {errors}"
-            print("PASS browser startup, editing, undo, mesh GPU draw and orbit input")
+            print(f"PASS browser startup, editing, undo, visible mesh ({filled} pixels) and orbit ({changed} changed pixels)")
         finally:
             await page.screenshot(path=str(output / "last-state.png"), full_page=True)
             (output / "console.json").write_text(json.dumps(events, indent=2), encoding="utf-8")
