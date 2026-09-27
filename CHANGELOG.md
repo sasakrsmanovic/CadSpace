@@ -1,27 +1,17 @@
 # Changelog
 
+## Unreleased — CAD expansion, performance and workspace
+
+Expanded DXF transport/interpreters to ASCII/code pages and binary R12/R13+, OCS/affine geometry, legacy polylines/meshes, rational splines, supported hatch loops/patterns/islands, compound INSERT display and model/paper separation. Added native MESH/SPLINE/HATCH export and supported ownership/layout reconstruction. Native project v2 retains new geometry and original bytes/provenance, now checked against reparsed source. Corrected MTEXT radians and final orientation precedence.
+
+Added bounded mesh Booleans, matching-profile capped loft, parallel-transport sweep, control-point spline/3D polyline creation, 3D rotation/reflection/alignment and analytic bulge explode. The command registry now has 55 workflows.
+
+Added BVH picking/snapping/culling, incremental root tessellation, dictionary-based bulk transform replacement, packed geometry buffers and independent changed-range GPU selection flags. Added deterministic performance/equivalence regressions and a recorded 100,000-line warmed-picking comparison.
+
+Refined the Uno workspace with stacked ribbon groups, minimize/restore, command completion/Tab, expandable history, cursor-adjacent input, context actions, hideable Properties and individual snap settings. The 3D viewport includes world-plane text, styles, picking/highlights, projection and uncapped clipping; browser readback uses the pinned RGBA adapter. Release browser trimming is exercised through published-app tests.
+
+Verification comprises 169 headless tests, independent ASCII/binary DXF audits, three desktop builds and browser pixel/interaction tests. CI packages all six libraries and validates the deployed Pages revision. This remains a preview, not full AutoCAD, analytic B-rep or engineering qualification; see docs/FEATURES.md.
+
 ## 0.1.0 — initial implementation
 
-### CAD core
-
-Double-precision geometry, immutable drawing/entity records, atomic edits, bounded undo/redo, layer visibility/locking, nested blocks, selection windows, object/grid snapping, coordinate parsing and mesh modeling are implemented as headless libraries.
-
-The command registry includes 42 workflows. In addition to the initial drawing/transform/block/model commands, the line-editing increment adds TRIM, EXTEND, FILLET, CHAMFER, JOIN, BREAK and ELLIPSE. These commands implement the documented line-based/XY behaviors, not all AutoCAD options. Numeric-only prompts now ignore extra pointer clicks. Degenerate rectangles and repeated adjacent interactive polyline vertices are rejected.
-
-### Files
-
-ASCII DXF exchange preserves original text for unchanged imports and original record data for untouched imported objects. Unsupported records remain opaque. Export-loss reports distinguish display geometry from native editing semantics.
-
-Versioned `.cadspace` projects preserve all implemented entity types, mesh topology, layers, blocks and imported DXF provenance. Native Save and DXF Export are separate operations. Browser/desktop file dialogs, multiple document tabs, unsaved-tab warnings and dirty-state display are connected to the document model.
-
-### UI and rendering
-
-The Uno application includes an original dark CAD ribbon, command history/input, drafting/3D viewports, layer/block/property palettes, document tabs, status modes, navigation controls and a resizable palette boundary. Skia draws the 2D scene; a shader/VBO OpenGL renderer draws depth-tested shaded mesh geometry. GPU-context failures are reported and return to 2D.
-
-### Delivery
-
-CI runs geometry/document, exchange/editing, and native-persistence regression suites, builds desktop targets, publishes WebAssembly, and retains browser-test screenshots and console logs. Per-job concurrency avoids blocking browser validation behind cancellation of unrelated desktop jobs. Pages deployment checks the current main revision. The release workflow packages reusable libraries, self-contained desktop distributions and browser/source archives, with checksums for all assets.
-
-### Important boundaries
-
-This is not full AutoCAD parity or an industrial solid-modeling kernel. There is no DWG, ACIS/B-rep, solid Boolean/fillet/chamfer, NURBS kernel, full DXF semantics, dynamic blocks/attributes, complete typography, arbitrary UCS, paper-space plotting, plugin/API parity, full docking or enterprise collaboration. Native AutoCAD and physical-GPU qualification have not been completed. See `docs/FEATURES.md`.
+Introduced geometry/model/editing/exchange/rendering/controls libraries, Uno desktop/browser workspace, basic drafting, layers/blocks, mesh primitives, native storage and build/Pages/release workflows.

@@ -14,4 +14,6 @@ The following commands extend the initial command reference. They are implemente
 
 Line editing is exposed in the **Modify** ribbon tab. Every operation validates all affected objects and commits atomically, supports undo, and respects locked layers. Trim/extend target picking uses the command engine's `PickTolerance` in model units (default 5). No curved cutting boundaries, polyline filleting, 3D curve editing, unequal-distance chamfer options, or complete edge-extension modes are claimed.
 
-At numeric prompts such as box height or rotation angle, extra pointer clicks do not corrupt the command state. Numeric values still need to be entered in the command line.
+At numeric prompts such as box height or rotation angle, extra pointer clicks do not corrupt the command state. Numeric values can be entered in the command line or the dynamic-input box.
+
+Bulged 2D polylines can now be exploded into analytic arcs/lines. This does not add curved-boundary TRIM/EXTEND or polyline-wide FILLET option parity.

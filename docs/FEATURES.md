@@ -1,54 +1,45 @@
-# Feature coverage and qualification
+# Coverage and remaining boundaries
 
-This document describes implemented behavior, not an assertion of AutoCAD parity. A command appearing in the ribbon has a working implementation; unsupported command names report an error rather than pretending to execute. See [commands](COMMANDS.md) and [line editing](LINE-EDITING.md) for exact workflows.
+This matrix describes implemented behavior, not full AutoCAD parity. Opaque byte preservation is not semantic support.
 
-## Drafting and editing
+| Area | Implemented | Remaining boundaries |
+| --- | --- | --- |
+| DXF transport | ASCII, legacy R12 and R13+ binary groups, UTF-8/declared legacy code pages, original-byte preservation | Semantic conversion across every release and private extension |
+| Geometry | LINE/POINT/CIRCLE/ARC/ELLIPSE, supported LWPOLYLINE, OCS/affine placement, legacy 2D/3D polylines and polyface/polygon meshes | Wide-polyline faces, fitted legacy curves, all invisibility/edge/subdivision flags |
+| Splines | Rational control points, knots/weights, homogeneous evaluation, adaptive tessellation, control-point creation | Fit-only reconstruction, complete spline editing and NURBS surface kernel |
+| Mesh exchange | MESH/3DFACE/SOLID/TRACE, native indexed MESH output | ACIS/SAT/SAB 3DSOLID/BODY/REGION decoding and subdivision regeneration |
+| Hatches | Bulged polyline/edge-list loops, line/arc/ellipse/spline edges, island styles, bounded dash patterns, native HATCH output | Gradients, complete authoring/associativity; edge-list curves are sampled for editing; simple nonintersecting loop assumptions |
+| Blocks | Nested definitions/base points/placements, supported attributed/array INSERT display children | Dynamic actions/constraints, full attribute editor, xref lifecycle and all array semantics |
+| Typography | Plain TEXT/MTEXT, width/oblique transforms, OCS/world-plane rendering; MTEXT radians/final orientation precedence | SHX, complete font/style substitution, every alignment/MTEXT grammar/column, shaping and annotative-text qualification |
+| Annotations | Aligned dimensions, anonymous dimension-block display, LEADER vertex paths | Associative styles/constraints, native authored DIMENSION/MLEADER/TABLE parity |
+| Structure | Entity visibility, model/paper-space separation, layout selector, supported ownership/block-record/layout dictionaries | Embedded paper-space model VIEWPORTs, sheet authoring, plotting/styles and exhaustive dependency repair |
+| Drafting | 55 commands; line-based trim/extend/fillet/chamfer/join/break, transforms, arrays, bulge explode, undo/redo | Stretch, full grips, arbitrary UCS editing, every command option and AutoCAD API/plugin compatibility |
+| Snaps | Indexed nested/OCS endpoints/midpoints/centers/quadrants, line intersections/perpendiculars, circle/arc tangents, nearest closure | Every curve intersection/tangent/perpendicular combination, extension tracking and fully screen-space 3D/UCS snap behavior |
+| Modeling | Primitives/extrusion/revolved surfaces, capped matching-profile polygon loft, parallel-transport sweep, bounded mesh Booleans | Analytic B-rep/ACIS topology, industrial solid fillets/chamfers/shelling, general NURBS surfaces, full self-intersection/manufacturing certification |
+| UI | Dense/minimizable ribbon, completion/Tab, expandable history, dynamic input, context actions, hideable/resizable properties and snap controls | Pixel-exact AutoCAD UI, full docking/floating palettes, CUI customization, Sheet Set Manager, tool palettes, complete touch/accessibility parity |
 
-| Feature | Status and boundary |
-| --- | --- |
-| Lines, points, circles, arcs | Editable. ARC accepts three points in the XY drawing plane. |
-| Polylines and rectangles | Editable; DXF bulges are retained and tessellated. UI creates straight segments. |
-| Ellipses | Analytic creation from center/major axis/minor radius; rendering, DXF and native persistence. General ellipse transform/property editing is not complete. |
-| Text | Plain text and basic multiline display. No full MTEXT grammar, SHX font engine, shaping qualification, fields, or style inheritance. |
-| Dimensions | Nonassociative aligned dimensions with fixed display sizing. DXF export currently explodes display geometry. |
-| Hatching | A single closed polyline boundary, generated line pattern or model-level solid fill. No nested islands, arbitrary PAT definitions, gradient editor, or associativity. |
-| Selection | Click, window, crossing, additive/toggle selection. 3D viewport is orbit-only; select mesh wireframes from Top view. |
-| Snapping | Endpoint, midpoint, center, quadrant and nearest; grid, ortho and 45-degree polar guidance. No complete intersection/tangent/perpendicular/extension snap engine. |
-| Modify | Move, copy, rotate, uniform scale, XY mirror, erase, rectangular arrays. |
-| Line editing | Atomic TRIM, EXTEND, FILLET, CHAMFER, JOIN and BREAK for the documented coplanar-line workflows. Curved boundaries, polyline fillets and full option parity are not implemented. |
-| Offset | Lines, circles and arcs only; signed numeric offset, not a complete side-picking offset workflow. |
-| Explode | Straight polylines and supported block children. Bulged polyline explode, arbitrary affine block decomposition, and unsupported children are rejected atomically. |
-| Blocks | Definitions, base points, nested inserts, transforms, layer-0/by-block inheritance and insertion. No attributes, dynamic parameters/actions, constraints, block editor, or xref management. |
-| Layers | Current layer, color, visibility and locking. No complete linetype engine, per-viewport overrides, layer filters/states, or exhaustive ACI palette. |
-| Undo/redo | Immutable document transactions, bounded to 256 undo entries. Selection/view changes are not document transactions. |
-| Remaining advanced 2D | Stretch, spline editing, region Boolean operations, constraints, comprehensive grips and many command options are not implemented. |
+## Modeling boundaries
 
-## Three-dimensional modeling
+UNION/SUBTRACT/INTERSECT use iterative double-precision BSP operations with weld/stitch handling and manifold/orientation checks. Inputs are limited to 16,000 combined triangles and work is bounded to 20 million steps. Unsupported operations fail atomically. These are triangle-mesh operations, not exact analytic solid construction.
 
-Boxes, cylinders, cones and spheres are explicit triangle meshes. Extrusion triangulates a simple planar XY profile and adds side/cap triangles. Concave simple profiles are supported; holes, self-intersections and degeneracies are rejected. Revolve creates a sampled polyline surface around a two-point axis and does not claim a watertight B-rep solid.
+LOFT requires planar closed profiles with matching vertex counts and correspondence in drawing order. SWEEP transports a polygonal profile along an open polyline and rejects reversal/degeneracy. Both are bounded, capped triangle meshes. Neither provides guide rails, arbitrary correspondence, exact sweep surfaces, universal self-intersection rejection or certified mass properties.
 
-There is no ACIS/SAT kernel, analytic solid topology, Boolean union/subtract/intersect, solid fillet/chamfer, shelling, NURBS surface kernel, arbitrary sweep/loft, direct face modeling, associative feature tree, or watertight-manifold certification. The signed-volume display is meaningful only for consistently oriented closed meshes; it is not a physical mass-properties certificate.
+## Rendering and performance boundaries
 
-GPU rendering includes triangle lighting, depth testing, wire edges, floating-origin coordinates, orbit/pan/zoom, and top/front/isometric navigation. GPU picking, section planes, clipping caps, textures, materials, shadows, physically based rendering and full 3D annotation are not implemented. The navigation widget is a set of view controls, not an exact reproduction of AutoCAD's ViewCube.
+The viewport supports shaded/wireframe/hidden-line styles, text atlases, CPU picking/highlights, perspective/orthographic cameras, anchored zoom and a clipping half-space. Clipping is uncapped and display-only. There is no comprehensive PBR/material/texture/shadow system, transparency ordering, exact hidden-line vector export or full 3D manipulation gizmo.
 
-## DXF behavior
+BVHs accelerate candidates; immutable roots reuse tessellation; selection uses a separate GPU attribute stream. Window selection, document validation, aggregate scene rebuilding and some text updates remain proportional to drawing size. Cold index construction, allocations and complex block graphs still require profiling. No claim of whole-app speedup follows from the narrow picking benchmark.
 
-The ASCII reader recognizes LINE, POINT, CIRCLE, ARC, supported LWPOLYLINE, XY ELLIPSE, basic TEXT/MTEXT, simple INSERT, and 3DFACE. It reads layer definitions, block definitions, entity colors and selected metadata. Width-bearing polylines, non-world object-coordinate systems, thickness, paper-space records and unsupported entities remain opaque.
+The current Uno host uses framebuffer readback, not zero-copy WebGPU/Vulkan. The browser adapter depends on a pinned private RGBA-conversion field and must be requalified on upgrade. GPU text atlases are bounded to eight 2048-square pages; complex/large labels may exceed the budget.
 
-An unchanged imported drawing can be emitted as the original input text. Untouched imported entities retain their group-pair records after unrelated edits. Unknown sections are retained. Modified supported objects are regenerated and can lose unmodeled object metadata; changed layer/block tables can also lose unmodeled metadata. Such conversions are reported. Handle ownership, dictionary references and all cross-object constraints are not comprehensively regenerated, so edited files require independent downstream validation.
+## Persistence and reliability
 
-New/edited DXF output identifies as AC1027. Meshes export as independent 3DFACE records. CadSpace dimensions/hatches export as line/polyline/text display geometry with warnings. Native DIMENSION/HATCH editing semantics are not inferred from that display. Unsupported opaque objects do not become editable merely because they survive export.
+Native project v2 stores implemented entities, placements, compound identities, layout membership and original DXF provenance/bytes. It validates provenance against reparsed original geometry and tables before reusing raw records. Basic v1 projects are accepted. Editing unsupported metadata or compound semantics can still be lossy; keep the original and review export reports.
 
-Binary DXF, DWG, all-version DXF conversion, arbitrary code pages, AutoCAD vertical-product object semantics, proxy graphics decoding, embedded fonts/images, and full original application behavior are not supported. A 64 MiB application import limit and additional geometry limits apply.
+Undo history, cameras, active selection, open-tab arrangement and transient input are not persisted. Automatic recovery, browser-refresh protection, shared editing, encrypted storage and enterprise permissions are not implemented.
 
-## Native projects
+## Qualification
 
-`.cadspace` version 1 is a manually serialized JSON format for the complete implemented model. It preserves persistent IDs, all implemented geometry, mesh topology, hatch/dimension parameters, layers, nested blocks, and the original DXF provenance/map. The reader rejects unsupported versions and validates the resulting model. It does not use unrestricted polymorphic deserialization or execute drawing data.
+169 headless tests include synthetic independent DXF fixtures, native persistence, Booleans, projection/picking, spatial-index equivalence, modeling, snapping, completion and malformed-provenance rejection. CI independently audits canonical ASCII/binary exports and tests published browser rendering.
 
-Undo history, open-tab state, selection, cameras, and transient command input are session state and are not stored. Automatic crash recovery, journal replay, browser-refresh protection, shared editing, encrypted storage, and enterprise permissions are not implemented. Save before closing a browser or desktop window.
-
-## UI and platform qualification
-
-The desktop and browser application share a custom Uno ribbon/viewport/command/palette workspace. The layout follows familiar CAD workflows but is not pixel-exact AutoCAD UI or complete interaction parity. It does not yet provide docking/floating palettes, paper-space layouts, plotting, a customizable CUI system, AutoLISP/VBA/.NET AutoCAD APIs, tool palettes, standards management, Sheet Set Manager, or every dialog/property editor.
-
-Core regression tests and platform builds are automated. Browser smoke tests use Chromium with a software-backed graphics context in CI and are not physical-GPU performance qualification. Native AutoCAD open/AUDIT/save/reopen, large industrial DXF corpora, accessibility audits, touch/pen qualification, multi-monitor desktop operation, driver matrices, and independent security reviews have not been completed.
+**Not completed:** Autodesk AutoCAD open/AUDIT/save/reopen, exhaustive industrial DXF corpora, physical GPU/driver matrices, general large-document performance budgets, security/accessibility audits, signed/notarized installers or engineering certification. Software-backed CI is not evidence of those qualifications.

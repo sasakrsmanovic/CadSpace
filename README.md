@@ -1,48 +1,51 @@
 # CadSpace
 
-### A modular CAD workspace for desktop and the browser
+### Modular CAD for desktop and the browser
 
 [![Build, test and deploy](https://github.com/wieslawsoltes/CadSpace/actions/workflows/build.yml/badge.svg)](https://github.com/wieslawsoltes/CadSpace/actions/workflows/build.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**[Browser application](https://wieslawsoltes.github.io/CadSpace/)** · **[Feature coverage](docs/FEATURES.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Command reference](docs/COMMANDS.md)** · **[Build artifacts](https://github.com/wieslawsoltes/CadSpace/actions/workflows/build.yml)**
+**[Open the browser app](https://wieslawsoltes.github.io/CadSpace/)** · **[Commands](docs/COMMANDS.md)** · **[Coverage](docs/FEATURES.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Performance](docs/PERFORMANCE.md)**
 
-CadSpace is an independent, open-source CAD application built with **Uno Platform 6.7**, **.NET 10**, **SkiaSharp**, and **OpenGL/WebGL**. It combines a familiar dark ribbon workspace, a double-precision drafting model, command-line editing, blocks, layers, and triangle-mesh modeling. The same C# application targets Windows, macOS, Linux, and WebAssembly.
+CadSpace is an independent C# CAD workspace built with Uno Platform, Skia and OpenGL/WebGL. It combines double-precision drafting, layers and blocks, rational splines, mesh modeling, ASCII/binary DXF exchange, and reusable desktop/browser controls.
 
-> **Early implementation, not full AutoCAD parity.** CadSpace implements the workflows described below; it is not an exact or production-qualified AutoCAD replacement. In particular, triangle meshes are not ACIS/B-rep solids. DWG, solid Boolean operations, dynamic blocks, constraints, paper-space plotting, and many advanced drafting tools are not implemented. Read the [coverage matrix](docs/FEATURES.md) before using engineering files. Keep original DXF files and independent backups.
+> **Development preview—not full AutoCAD parity.** The tools below are implemented within documented boundaries. Mesh modeling is not an analytic ACIS/B-rep kernel; arbitrary DXF editing is not universally lossless. Preserve original drawings, review export warnings, and save a native project before closing or refreshing the application. Automatic crash recovery is not implemented.
 
 ## Workspace
 
-The application opens an editable studio floor plan with walls, glazing, doors, furniture blocks, annotations, and dimensions. **3D example** opens a separate model document containing editable mesh primitives.
+The startup document is an editable studio floor plan. **3D example** opens a separate model study. The custom Uno workspace includes a dense ribbon with stacked command groups, document tabs, command completion/history, cursor-adjacent dynamic input, properties/layers/blocks, model/layout selection, a resizable or hideable Properties palette, and view navigation.
 
-The custom Uno controls include a grouped command ribbon, document tabs, a drafting viewport, a 3D viewport, a command console with history, property/layer/block palettes, a resizable palette splitter, and drafting status controls. These controls use original vector artwork and do not depend on the application project.
-
-## Implemented capabilities
-
-| Area | Available now |
+| Area | Available workflows |
 | --- | --- |
-| Drafting | Lines, points, polylines, rectangles, circles, three-point arcs, plain text, aligned dimensions, and single-boundary hatching |
-| Editing | Selection and crossing/window selection; move, copy, rotate, scale, mirror, line/arc/circle offset, erase, rectangular arrays, and supported explode operations |
-| Precision | Double-precision coordinates, absolute/relative/polar input, endpoint/midpoint/center/quadrant/nearest snaps, grid snap, orthographic and polar guidance |
-| Organization | Named layers, colors, visibility, locking, current layer, block definitions, nested references, and insertion |
-| Modeling | Triangle-mesh boxes, cylinders, cones, spheres, extrusion of closed XY profiles, and revolved polyline surfaces |
-| Viewing | Pointer-centered zoom, middle-button pan, zoom extents, 3D orbit, perspective viewing, shaded meshes with edges, and top/front/isometric navigation |
-| Document lifecycle | Multiple documents, transactional undo/redo, dirty-state tracking, native project save/open, and close-tab discard confirmation |
-| Interchange | Bounded ASCII DXF reader/writer, original-record preservation for untouched objects, unsupported-record retention, and explicit export-loss reports |
+| Drafting | Lines, 2D/3D polylines, rectangles, circles, arcs, ellipses, control-point splines, points, plain text, aligned dimensions and basic hatching |
+| Editing | Move/copy/rotate/scale/mirror; 3D rotation, plane reflection and rigid alignment; offset, arrays, supported explode including bulged segments; line trim/extend/fillet/chamfer/join/break; undo/redo |
+| Precision | Absolute/relative/polar coordinates; indexed nested-block/OCS anchors; line intersection/perpendicular and circle/arc tangent snaps; grid, ortho and polar guidance |
+| Organization | Layers, visibility, locking, block definitions/nesting/insertion, separate model and paper-space entity roots |
+| Mesh modeling | Box/cylinder/cone/sphere, extrusion, revolved surfaces, capped matching-profile loft, parallel-transport sweep, bounded closed-mesh union/subtraction/intersection |
+| 3D viewing | Depth-tested shading, feature edges, face/edge/point picking, highlights, world-plane plain text, perspective/orthographic projection, uncapped clipping, pan/orbit and anchored zoom |
+| Files | ASCII and binary DXF, supported code pages and typed geometry, native indexed MESH/SPLINE/HATCH export, original-record preservation, versioned native projects |
 
-## Save a project; export an interchange copy
+The registry contains **55 command workflows**. See [Commands](docs/COMMANDS.md) for exact inputs and restrictions. A familiar name does not imply every AutoCAD command option is implemented.
 
-**Save** writes a versioned **`.cadspace`** JSON project. It retains all implemented entity types, mesh topology, dimensions, hatch parameters, layers, block definitions, persistent IDs, and imported DXF provenance. **Open** accepts `.cadspace` and ASCII `.dxf` files.
+## Performance work
 
-**Export DXF** writes a DXF interchange copy. Meshes become `3DFACE` records. CadSpace dimensions and hatches currently become display geometry, not equivalent native DXF editing objects. Export reports these conversions and asks for confirmation. An export does not mark the native project saved.
+Immutable scene roots reuse unchanged tessellation. Lazy bounding-volume hierarchies accelerate click picking, 3D ray picking, snap searches and visible-path culling. Selection highlights use a separate GPU attribute stream: selecting an object does not regenerate its geometry buffer. Packed geometry uploads avoid a temporary array per vertex; redraw requests are coalesced and timing-label updates are throttled.
 
-An unchanged imported drawing can be returned as its original DXF text. Unchanged imported records retain their group data after unrelated edits. This does **not** establish lossless editing of arbitrary DXF files: metadata on modified objects or regenerated tables may not survive. Unsupported records are retained as opaque data, not rendered as invented geometry.
+A reproducible 100,000-line benchmark compares 150 warmed indexed picks against a linear scan, verifies identical results, and records both timings in CI. It is **not a whole-application FPS, cold-start, GPU or million-entity scalability claim**. See [methodology and remaining costs](docs/PERFORMANCE.md).
 
-There is no automatic browser-refresh recovery yet. Save a native project before refreshing, closing the browser, or closing the desktop window.
+## Files: Save versus Export
 
-## Quick start
+**Open** accepts `.cadspace` and ASCII or binary `.dxf`. **Save** writes the native project. **Export DXF** and **Binary DXF** write interchange copies without clearing native dirty state.
 
-Use **New** for a blank drawing. Type each of these lines in the command box and press Enter after each line:
+Typed DXF support includes OCS/affine circles, arcs, polylines and ellipses; legacy 2D/3D POLYLINE sequences; polyface/polygon meshes; rational SPLINE; MESH; SOLID/TRACE/3DFACE; supported HATCH loops, edge lists, islands and patterns; and display children for supported attributed/array INSERTs. Native MESH, SPLINE and HATCH output retains the modeled topology/control data. Model/paper-space roots and supported ownership/layout links are reconstructed.
+
+Untouched imported records preserve their original groups. An unchanged byte import can return its original bytes, including binary/legacy encoding. Native version 2 retains expanded geometry and DXF provenance; provenance is checked against reparsed source data before raw-record reuse. Basic version 1 projects remain readable.
+
+Unknown entities remain opaque, not invented geometry. Modified compound objects, generated dimensions, sampled boundaries and unmodeled metadata can be lossy or unsupported; review the reports. There is no DWG or ACIS decoder. Native AutoCAD open/AUDIT/save/reopen qualification has not been performed.
+
+## Try a drawing
+
+Enter one line at a time in the command box:
 
 ```text
 RECTANG
@@ -54,96 +57,86 @@ CIRCLE
 ZOOM
 ```
 
-For a mesh extrusion, select the rectangle, run `EXTRUDE`, and enter a height. The original profile is retained. Press **TOP** to return to drafting. Use **Save** to retain native mesh editing semantics.
+Select a closed profile before `EXTRUDE`. For `LOFT`, select closed planar profiles with matching sampled vertex counts in drawing order. For `SWEEP`, select one closed profile and one open polyline. Mesh Booleans require closed, consistently oriented operands. `SUBTRACT` uses the first selected mesh **in drawing order**, not click order, as its base.
 
-Click to select an object. Drag left-to-right to select objects entirely within a window; drag right-to-left for crossing selection. Shift/Ctrl modifies the selection. Select objects **before** starting a modification command.
+Click a 3D face to select it; drag to orbit. Middle-drag pans, and the wheel zooms around the pointer. Choose Wireframe, HiddenLine, Shaded or ShadedEdges from the view selector. Clipping removes a display half-space without altering the mesh or generating caps.
 
 | Input | Action |
 | --- | --- |
-| Mouse wheel / middle-drag | Zoom about the pointer / pan |
-| Left-drag in 3D | Orbit the model |
-| Enter / Escape | Submit or finish the current command / cancel |
-| Up / Down in command input | Recall command history |
+| Tab in an idle command box | Accept the highest-ranked command completion |
 | `@20,10` / `@50<30` | Relative Cartesian / relative polar point |
+| Enter / Escape; Up / Down | Submit or finish / cancel; command history |
 | Ctrl+N / Ctrl+O / Ctrl+S | New / open / native save |
-| Ctrl+Shift+E | Export DXF |
-| Ctrl+Z / Ctrl+Y / Ctrl+A | Undo / redo / select all, without stealing active text editing |
+| Ctrl+Shift+E | ASCII DXF export |
+| Ctrl+Z / Ctrl+Y / Ctrl+A | Undo / redo / select visible entities, respecting active text editing |
+| F2 / Ctrl+1 / F12 | Expanded command history / Properties palette / dynamic input |
 | F3 / F7 / F8 / F9 / F10 | Object snap / grid / ortho / grid snap / polar |
 
-Browser-reserved keyboard shortcuts can take precedence; all primary operations are also available as controls. See the [command reference](docs/COMMANDS.md) for aliases and exact prompts.
+Use **Snap options** to enable individual modes, including perpendicular and tangent. Browser-reserved shortcuts may take precedence; primary operations also have visible controls.
 
 ## Build and run
 
-Install the .NET 10 SDK. The repository pins **Uno.Sdk 6.7.30**, with the **6.7.135** Uno graphics integration, **SkiaSharp 3.119.2**, and **Silk.NET 2.23.0**. `global.json` permits newer stable .NET 10 feature bands.
+Pinned dependencies: **Uno.Sdk 6.7.30**, **Uno graphics 6.7.135**, **SkiaSharp 3.119.2**, **Silk.NET.OpenGL 2.23.0**, **.NET 10**. The SDK pin permits newer stable .NET 10 feature bands.
 
 ```sh
 git clone https://github.com/wieslawsoltes/CadSpace.git
 cd CadSpace
 dotnet workload install wasm-tools
 
-# Desktop: Windows, macOS, or Linux/X11
-dotnet run --project src/CadSpace.App -f net10.0-desktop
+# Desktop: Windows, macOS or Linux/X11
+dotnet run --project src/CadSpace.App -f net10.0-desktop -p:CadSpaceDesktopOnly=true
 
 # Browser development host
 dotnet run --project src/CadSpace.App -f net10.0-browserwasm
 
-# Static browser distribution for GitHub Pages
+# GitHub Pages distribution
 dotnet publish src/CadSpace.App -c Release -f net10.0-browserwasm \
   -p:WasmShellWebAppBasePath=/CadSpace/
 ```
 
-The 3D viewport requires a suitable hardware-accelerated OpenGL/GLES/WebGL context. If initialization fails, CadSpace reports the failure and returns to the 2D view. Linux desktop hosting requires an X11 display and the native libraries required by Uno/Skia. macOS uses Uno's platform graphics integration. Software renderers and remote desktops may behave differently from physical GPUs.
+A compatible OpenGL/GLES/WebGL context is required for 3D. Linux also needs the native Uno/Skia dependencies and a display. Release browser builds enable IL/XAML resource trimming and the jiterpreter; `-p:CadSpaceUntrimmed=true` disables the trimming configuration for diagnosis. Test the published build, not only Debug, when changing reflective APIs or upgrading Uno.
 
 ## Reusable libraries
 
-| Package | Responsibility | Dependencies within CadSpace |
-| --- | --- | --- |
-| `CadSpace.Geometry` | Double-precision vectors, transforms, intersections, bounds, triangulation | None |
-| `CadSpace.Model` | Immutable entities, documents, scene construction, blocks, mesh generation | Geometry |
-| `CadSpace.Engine` | Editing sessions, selection, snapping, commands, sample drawings | Model |
-| `CadSpace.Dxf` | ASCII DXF exchange and native project persistence | Model |
-| `CadSpace.Rendering` | Cameras, host-agnostic Skia drawing, OpenGL scene renderer | Model |
-| `CadSpace.Controls` | Composable Uno controls and workspace | Engine, Rendering |
+| Package | Responsibility |
+| --- | --- |
+| `CadSpace.Geometry` | Double vectors/transforms, OCS, rays/planes, intersections, triangulation and spatial index |
+| `CadSpace.Model` | Immutable documents, blocks, curves/hatches, scene construction/cache, mesh generation/Booleans/surfaces |
+| `CadSpace.Engine` | Editing sessions, commands/completion, selection, indexed snapping and API-independent picking |
+| `CadSpace.Dxf` | ASCII/binary transport, typed interpreters/writers and native project persistence |
+| `CadSpace.Rendering` | Cameras, Skia drafting, OpenGL geometry/text/selection passes |
+| `CadSpace.Controls` | Reusable Uno ribbon, viewport, palettes, console, dynamic input, tabs and status/workspace composition |
 
-Every library is packable independently. `CadSpace.Controls` has no reference to the application or its file dialogs. The pure geometry/model/editor/exchange packages do not require a UI runtime.
+All six are independently packable. Controls share one package rather than an assembly per widget. Core/editing/exchange do not require Uno or a graphics context. The application owns file dialogs and document lifetime.
 
 ```csharp
-using CadSpace.Engine;
-using CadSpace.Geometry;
-using CadSpace.Model;
-
-var session = new CadSession();
-session.Add("Create line", new LineEntity(new Vec3(0, 0), new Vec3(100, 50)));
-session.SelectAll();
-session.TransformSelection("Move", Transform3.Translation(new Vec3(20, 10)));
-session.Document.Undo();
-
-// In an Uno host:
+var session = new CadSpace.Engine.CadSession();
+session.Add("Line", new CadSpace.Model.LineEntity(new(0, 0), new(100, 50)));
+var commands = new CadSpace.Engine.CommandEngine(session);
 var workspace = new CadSpace.Controls.CadWorkspace();
-workspace.Bind(session, new CommandEngine(session));
-// The host handles workspace.FileRequested and owns storage/document lifetime.
+workspace.Bind(session, commands);
 ```
 
 ## Verification and delivery
 
 ```sh
+# Independent fixture generator: test-only, not shipped with the application.
+python -m pip install ezdxf==1.4.4
+python tests/fixtures/generate.py
+
 dotnet run --project tests/CadSpace.Tests -c Release
 dotnet run --project tests/CadSpace.Exchange.Tests -c Release
 dotnet run --project tests/CadSpace.Persistence.Tests -c Release
+dotnet run --project tests/CadSpace.Advanced.Tests -c Release
+dotnet run --project tests/CadSpace.Performance.Tests -c Release
 ```
 
-The executable regression suites test geometry degeneracies, mesh winding/volume, transaction atomicity, undo/redo, selection, snaps, layer locks, block transforms/cycles, DXF preservation, and native persistence. CI also builds the desktop application on three operating systems, publishes WebAssembly, and captures browser smoke-test diagnostics. See each workflow run for actual results; a build is not physical-GPU or native-AutoCAD qualification.
+The five executable suites currently contain **169 tests**. CI regenerates independent fixtures and requires zero ezdxf-reported errors **and zero repairs** for tested ASCII/binary exports. This is a synthetic independent-library audit, not Autodesk qualification.
 
-**Build, test and deploy** runs on pushes and pull requests. Successful main-branch core/browser jobs publish the static application to GitHub Pages; desktop builds are reported independently. Packages, source, browser output, and smoke-test diagnostics are retained as workflow artifacts. Pages must be available to the repository and the workflow must have Pages deployment permission.
+CI builds three desktop hosts, publishes WebAssembly, packages all six libraries, and exercises rendered browser pixels, selection upload behavior and CAD interactions. Screenshots, diagnostics, source and benchmark output are retained as artifacts. Chromium uses a software-backed graphics context; this does not qualify physical GPU drivers or performance.
 
-**Release** runs for `vX.Y.Z` tags or a manually supplied version. It verifies the regression suites, builds self-contained desktop distributions, packages all reusable libraries, and attaches browser/source archives and checksums to a GitHub release. It does not automatically publish packages to NuGet.org. Desktop signing/notarization and independent installer qualification are not configured.
+Successful current-main builds deploy to GitHub Pages and verify the served revision. Tagged releases verify the same headless suites/audits and package desktop/browser/source distributions with checksums. NuGet.org publication, signing and notarization are not automatic.
 
-## Rendering design
+The graphics host remains Uno `GLCanvasElement`, with framebuffer readback and a pinned RGBA conversion adapter. It is **not zero-copy WebGPU/Vulkan**. See [Coverage](docs/FEATURES.md) for remaining model, DXF, UI and qualification boundaries.
 
-The drafting renderer draws directly into Uno's Skia canvas. Model coordinates stay in doubles and are rebased before conversion to GPU floats. The 3D renderer uses explicit vertex buffers, shaders, lighting, and depth testing, uploading geometry only when the scene or floating origin changes.
-
-The current 3D host is Uno's `GLCanvasElement`. Its platform integration can involve a framebuffer readback/composition copy; this is **not** a custom zero-copy WebGPU/Vulkan engine. WebGPU, Vulkan-specific CAD rendering, GPU picking, spatial indexing for very large drawings, and production-scale performance qualification remain future work. The on-screen timing is CPU draw-recording time, not a fabricated GPU duration or FPS counter.
-
-## Project information
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). CadSpace is MIT licensed. Autodesk, AutoCAD, DXF, and related names belong to their respective owners. CadSpace is independent and does not include Autodesk source code, icons, fonts, or proprietary modeling components.
+MIT licensed. Read [Contributing](CONTRIBUTING.md), [Security](SECURITY.md) and [Third-party notices](THIRD-PARTY-NOTICES.md). CadSpace is independent of Autodesk and contains no Autodesk source, icons, fonts, ACIS or RealDWG components.

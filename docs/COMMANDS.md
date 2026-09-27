@@ -27,7 +27,7 @@ Enter one command or prompted value at a time. Coordinates use invariant decimal
 | JOIN | J | Selected connected line chain; creates a polyline. |
 | BREAK | BR | One selected line; two projected break points. |
 | ERASE | E | Deletes selected editable objects. Locked/opaque objects prevent the transaction. |
-| EXPLODE | X | Selected supported blocks or straight polylines. |
+| EXPLODE | X | Selected supported blocks or polylines, including bulged segments. |
 | ARRAY | AR | Selected objects; `columns,rows,x-spacing,y-spacing`. At most 10,000 instances and 100,000 resulting objects. |
 | BLOCK | B | Selected objects; unique block name; base point. Replaces selection with an insert. |
 | INSERT | I | Existing block name; insertion point. Edit scale/rotation in Properties. |
@@ -41,10 +41,33 @@ Enter one command or prompted value at a time. Coordinates use invariant decimal
 | AREA | AA | Reports area of selected closed polylines using their tessellated boundary. |
 | UNDO | U | Undo the most recent document transaction. |
 | REDO | REDO | Redo the most recently undone transaction. |
-| SELECTALL | ALL | Select visible model-space entities. |
+| SELECTALL | ALL | Select visible entities in the active layout. |
 | ZOOM | Z | Zoom extents; no additional ZOOM command options yet. |
 | TOP | TOP | Switch to the top drafting viewport. |
-| 3DORBIT | 3DO | Switch to perspective 3D; drag to orbit. |
+| 3DORBIT | 3DO | Switch to the 3D viewport; click selects, drag orbits. |
 | HELP | ? | Print implemented command names and aliases. |
 
 See [line-editing details and boundaries](LINE-EDITING.md). Modification errors are reported in command history and do not partially update the drawing. Many standard AutoCAD options/subcommands are not implemented; command-name familiarity does not imply full option parity.
+
+
+## Additional 3D and view workflows
+
+| Command | Alias | Inputs and boundary |
+| --- | --- | --- |
+| 3DPOLY | 3P | WCS points; Enter finishes, C closes. |
+| SPLINE | SPL | Control points; Enter creates a clamped spline of degree up to 3. Not fit-point interpolation. |
+| ROTATE3D | 3R | Selected objects; two axis points and angle in degrees. |
+| MIRROR3D | 3M | Selected objects; three noncollinear mirror-plane points. |
+| ALIGN3D | 3A | Three source frame points followed by three target frame points; rigid, no scaling. |
+| LOFT | LOFT | Selected closed planar profiles with matching sampled vertex counts, in drawing order; capped polygon mesh. |
+| SWEEP | SW | One closed profile and one open polyline path; bounded parallel-transport mesh. |
+| UNION | UNI | Union selected closed triangle meshes. |
+| SUBTRACT | SU | Subtract others from the first selected mesh in drawing order. |
+| INTERSECT | IN | Intersection of selected closed triangle meshes. |
+| VSCURRENT | VS | Wireframe / HiddenLine / Shaded / ShadedEdges. |
+| PERSPECTIVE | PERSPECTIVE | 1 perspective, 0 orthographic. |
+| CLIP3D | CLIP3D | x,y,z,nx,ny,nz or OFF; retains normal·(point-origin) <= 0, uncapped display only. |
+
+The complete registry has 55 commands. EXPLODE now handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
+
+Tab accepts completion in an idle command box; F2 expands history, F12 toggles dynamic input, and Ctrl+1 toggles Properties. Snap options expose per-mode choices including line intersections/perpendiculars and circle/arc tangents. Browser shortcuts may take precedence.
