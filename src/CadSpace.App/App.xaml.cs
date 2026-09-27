@@ -27,20 +27,21 @@ public sealed partial class App : Application
         Open(SampleDrawings.StudioPlan()); MainWindow.Activate();
         _workspace.Loaded += (_, _) => _workspace.CommandLine.FocusInput();
     }
-    private void Open(Drawing drawing, DxfSource? source = null, bool model = false)
+    private void Open(Drawing drawing, DxfSource? source = null, bool model = false, string? displayName = null)
     {
-        var document = new OpenDrawing(drawing, source); _documents.Add(document); document.Session.Document.Changed += RefreshTabs; Activate(document);
+        var document = new OpenDrawing(drawing, source, displayName); _documents.Add(document); document.Session.Document.Changed += RefreshTabs; Activate(document);
         if (model) _workspace!.Viewport.Set3D(true);
     }
     private void Activate(OpenDrawing document)
     {
-        _active = document; _workspace!.Bind(document.Session, document.Commands); RefreshTabs(); _workspace.CommandLine.FocusInput();
+        _active = document; _workspace!.Bind(document.Session, document.Commands); _workspace.SetTitle(document.DisplayName); RefreshTabs(); _workspace.CommandLine.FocusInput();
     }
     private void RefreshTabs()
     {
         if (_active == null || _workspace == null) return;
-        _workspace.DocumentTabs.SetDocuments(_documents.Select(d => ((object)d, d.Session.Document.Drawing.Name, d.Session.Document.IsDirty)), _active);
-        if (MainWindow != null) MainWindow.Title = _active.Session.Document.Drawing.Name + (_active.Session.Document.IsDirty ? " *" : "") + " — CadSpace";
+        _workspace.DocumentTabs.SetDocuments(_documents.Select(d => ((object)d, d.DisplayName, d.Session.Document.IsDirty)), _active);
+        _workspace.SetTitle(_active.DisplayName);
+        if (MainWindow != null) MainWindow.Title = _active.DisplayName + (_active.Session.Document.IsDirty ? " *" : "") + " — CadSpace";
     }
     private async void ExecuteFile(string action)
     {
@@ -49,13 +50,14 @@ public sealed partial class App : Application
         {
             switch (action)
             {
-                case "NEW": Open(Drawing.Empty with { Name = $"Drawing{_documents.Count + 1}.dxf" }); break;
+                case "NEW": Open(Drawing.Empty with { Name = $"Drawing{_documents.Count + 1}.cadspace" }); break;
                 case "STUDIO": Open(SampleDrawings.StudioPlan()); break;
                 case "MODEL": Open(SampleDrawings.ModelStudy(), model: true); break;
                 case "OPEN": await OpenFile(); break;
-                case "SAVE": await SaveFile(); break;
+                case "SAVE": await SaveProject(); break;
+                case "EXPORT": await ExportDxf(); break;
                 case "ABOUT":
-                    await Dialog("CadSpace 0.1", "Independent CAD software built with Uno Platform 6.7, Skia and OpenGL/WebGL.\n\nThe workspace supports editable 2D geometry, layers, blocks, dimensions, hatching and triangle-mesh modeling. Type HELP for available commands.\n\nThis release is not a complete AutoCAD replacement. ACIS/B-rep solids, Boolean modeling, DWG, dynamic blocks, constraints and paper-space plotting are not implemented. DXF import/export supports a documented subset and reports lossy conversions. Keep backups of original files.\n\nMIT licensed • github.com/wieslawsoltes/CadSpace"); break;
+                    await Dialog("CadSpace 0.1", "Independent CAD software built with Uno Platform 6.7, Skia and OpenGL/WebGL.\n\nThe workspace supports editable 2D geometry, layers, blocks, dimensions, hatching and triangle-mesh modeling. Type HELP for available commands.\n\nSave writes a .cadspace project, retaining all implemented editing semantics and imported DXF provenance. Export DXF writes an interchange copy and reports conversion losses.\n\nThis release is not a complete AutoCAD replacement. ACIS/B-rep solids, Boolean modeling, DWG, dynamic blocks, constraints and paper-space plotting are not implemented. Keep backups of original files.\n\nMIT licensed • github.com/wieslawsoltes/CadSpace"); break;
             }
         }
         catch (Exception error) { _workspace.CommandLine.AddMessage(error.Message); await Dialog("Operation could not be completed", error.Message); }
@@ -64,45 +66,63 @@ public sealed partial class App : Application
     private async Task OpenFile()
     {
         var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, ViewMode = PickerViewMode.List };
-        picker.FileTypeFilter.Add(".dxf");
+        picker.FileTypeFilter.Add(".dxf"); picker.FileTypeFilter.Add(".cadspace");
         var file = await picker.PickSingleFileAsync(); if (file == null) return;
+        var native = file.Name.EndsWith(".cadspace", StringComparison.OrdinalIgnoreCase);
         var properties = await file.GetBasicPropertiesAsync();
-        if (properties.Size > DxfCodec.MaximumCharacters) throw new InvalidOperationException("This version limits DXF imports to 64 MiB.");
-        var text = await FileIO.ReadTextAsync(file); var read = DxfCodec.Read(text, file.Name);
-        Open(read.Drawing, read.Source);
-        if (!read.Warnings.IsEmpty) await Dialog("DXF import report", string.Join("\n\n", read.Warnings));
-        _workspace!.CommandLine.AddMessage($"Opened {file.Name}: {read.Drawing.Entities.Length} model-space records.");
+        if (properties.Size > (ulong)(native ? CadProjectCodec.MaximumCharacters : DxfCodec.MaximumCharacters)) throw new InvalidOperationException("The file exceeds the configured import size limit.");
+        var text = await FileIO.ReadTextAsync(file);
+        if (native)
+        {
+            var project = CadProjectCodec.Read(text); Open(project.Drawing, project.DxfSource, displayName: file.Name);
+            _workspace!.CommandLine.AddMessage($"Opened native project {file.Name}. Geometry and DXF provenance restored.");
+        }
+        else
+        {
+            var read = DxfCodec.Read(text, file.Name); Open(read.Drawing, read.Source);
+            if (!read.Warnings.IsEmpty) await Dialog("DXF import report", string.Join("\n\n", read.Warnings));
+            _workspace!.CommandLine.AddMessage($"Opened {file.Name}: {read.Drawing.Entities.Length} model-space records.");
+        }
     }
-    private async Task SaveFile()
+    private async Task SaveProject()
     {
         if (_active == null) return;
         var document = _active; var drawing = document.Session.Document.Drawing;
-        var result = DxfCodec.Write(drawing, document.Source);
+        var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = Path.GetFileNameWithoutExtension(document.DisplayName) };
+        picker.FileTypeChoices.Add("CadSpace project", new List<string> { ".cadspace" });
+        var file = await picker.PickSaveFileAsync(); if (file == null) return;
+        var text = CadProjectCodec.Write(drawing, document.Source); await FileIO.WriteTextAsync(file, text);
+        document.DisplayName = file.Name;
+        if (document.Session.Document.Drawing == drawing) document.Session.Document.MarkSaved();
+        RefreshTabs(); _workspace!.CommandLine.AddMessage($"Saved {file.Name}. Editable geometry, layers, blocks, and DXF provenance retained.");
+    }
+    private async Task ExportDxf()
+    {
+        if (_active == null) return;
+        var document = _active; var drawing = document.Session.Document.Drawing; var result = DxfCodec.Write(drawing, document.Source);
         if (!result.Warnings.IsEmpty)
         {
-            var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Review DXF export", Content = new ScrollViewer { MaxHeight = 360, Content = new TextBlock { Text = string.Join("\n\n", result.Warnings) + "\n\nExport a copy and keep your original file. This is not a lossless native project save.", TextWrapping = TextWrapping.Wrap } }, PrimaryButtonText = "Export copy", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+            var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Review DXF export", Content = new ScrollViewer { MaxHeight = 360, Content = new TextBlock { Text = string.Join("\n\n", result.Warnings) + "\n\nExport a copy and keep your original file. Use Save for a lossless native project.", TextWrapping = TextWrapping.Wrap } }, PrimaryButtonText = "Export copy", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         }
-        var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = Path.GetFileNameWithoutExtension(drawing.Name) + (result.Warnings.IsEmpty ? "" : "-export") };
+        var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = Path.GetFileNameWithoutExtension(document.DisplayName) + (result.Warnings.IsEmpty ? "" : "-export") };
         picker.FileTypeChoices.Add("ASCII DXF drawing", new List<string> { ".dxf" });
         var file = await picker.PickSaveFileAsync(); if (file == null) return;
         await FileIO.WriteTextAsync(file, result.Text);
-        if (result.Warnings.IsEmpty && document.Session.Document.Drawing == drawing) document.Session.Document.MarkSaved();
-        _workspace!.CommandLine.AddMessage($"Exported {file.Name}." + (result.Warnings.IsEmpty ? "" : " Editable native state remains in this session; export was lossy."));
+        _workspace!.CommandLine.AddMessage($"Exported {file.Name}." + (result.Warnings.IsEmpty ? "" : " Use Save to retain native editing semantics."));
     }
     private async Task Close(OpenDrawing document)
     {
-        if (_fileOperation) return;
-        _fileOperation = true;
+        if (_fileOperation) return; _fileOperation = true;
         try
         {
             if (document.Session.Document.IsDirty)
             {
-                var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Discard unsaved changes?", Content = $"Changes to {document.Session.Document.Drawing.Name} have not been saved losslessly. Closing the tab will discard this editing state.", PrimaryButtonText = "Discard", CloseButtonText = "Keep open", DefaultButton = ContentDialogButton.Close };
+                var dialog = new ContentDialog { XamlRoot = _workspace!.XamlRoot, Title = "Discard unsaved changes?", Content = $"Changes to {document.DisplayName} have not been saved to a native project. Closing the tab will discard this editing state.", PrimaryButtonText = "Discard", CloseButtonText = "Keep open", DefaultButton = ContentDialogButton.Close };
                 if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             }
             document.Session.Document.Changed -= RefreshTabs; _documents.Remove(document);
-            if (_documents.Count == 0) Open(Drawing.Empty);
+            if (_documents.Count == 0) Open(Drawing.Empty with { Name = "Drawing1.cadspace" });
             else if (_active == document) Activate(_documents[^1]); else RefreshTabs();
         }
         finally { _fileOperation = false; }
@@ -117,6 +137,7 @@ public sealed partial class App : Application
         public CadSession Session { get; }
         public CommandEngine Commands { get; }
         public DxfSource? Source { get; }
-        public OpenDrawing(Drawing drawing, DxfSource? source) { Session = new(new CadDocument(drawing)); Commands = new(Session); Source = source; }
+        public string DisplayName { get; set; }
+        public OpenDrawing(Drawing drawing, DxfSource? source, string? displayName = null) { Session = new(new CadDocument(drawing)); Commands = new(Session); Source = source; DisplayName = displayName ?? drawing.Name; }
     }
 }

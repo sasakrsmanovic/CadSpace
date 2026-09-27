@@ -51,7 +51,7 @@ public sealed class CadStatusBar : UserControl
         {
             var button = CadTheme.Button(name, () => Toggle(name)); button.FontSize = 10; button.MinHeight = 25; button.Padding = new Thickness(8, 2, 8, 2); button.Background = CadTheme.Brush(state ? 0xFF345B7B : 0xFF29323D); _toggles.Children.Add(button);
         }
-        var units = CadTheme.Text("  WCS  |  DECIMAL  ", 10, CadTheme.Muted); _toggles.Children.Add(units);
+        _toggles.Children.Add(CadTheme.Text("  WCS  |  DECIMAL  ", 10, CadTheme.Muted));
     }
 }
 
@@ -76,7 +76,7 @@ public sealed class CadWorkspace : UserControl
         var titlebar = new Grid { Background = CadTheme.Brush(0xFF20252D) }; titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titlebar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var quick = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3 };
         var brand = CadTheme.Text("CS", 17, 0xFFFFFFFF); brand.Margin = new Thickness(11, 0, 11, 0); quick.Children.Add(CadTheme.Box(brand, 0xFFB44547));
-        foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
+        foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE"), ("Export DXF", "EXPORT") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
         quick.Children.Add(CadTheme.Button("↶", () => _commands?.Start("UNDO"))); quick.Children.Add(CadTheme.Button("↷", () => _commands?.Start("REDO")));
         titlebar.Children.Add(quick); _title.HorizontalAlignment = HorizontalAlignment.Center; Grid.SetColumn(_title, 1); titlebar.Children.Add(_title);
         var extras = new StackPanel { Orientation = Orientation.Horizontal }; extras.Children.Add(CadTheme.Button("Studio plan", () => FileRequested?.Invoke("STUDIO"))); extras.Children.Add(CadTheme.Button("3D example", () => FileRequested?.Invoke("MODEL"))); extras.Children.Add(CadTheme.Button("About", () => FileRequested?.Invoke("ABOUT"))); Grid.SetColumn(extras, 2); titlebar.Children.Add(extras);
@@ -94,17 +94,26 @@ public sealed class CadWorkspace : UserControl
         Viewport.CoordinatesChanged += StatusBar.SetCoordinates; Viewport.Message += CommandLine.AddMessage; Palette.Message += CommandLine.AddMessage;
         Palette.InsertRequested += name => { Viewport.Set3D(false); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); };
         DocumentTabs.NewRequested += () => FileRequested?.Invoke("NEW");
-        AddShortcut(VirtualKey.N, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("NEW")); AddShortcut(VirtualKey.O, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("OPEN")); AddShortcut(VirtualKey.S, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("SAVE"));
+        AddShortcut(VirtualKey.N, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("NEW")); AddShortcut(VirtualKey.O, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("OPEN")); AddShortcut(VirtualKey.S, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("SAVE")); AddShortcut(VirtualKey.E, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => FileRequested?.Invoke("EXPORT"));
+        AddShortcut(VirtualKey.Z, VirtualKeyModifiers.Control, () => _commands?.Start("UNDO"), true); AddShortcut(VirtualKey.Y, VirtualKeyModifiers.Control, () => _commands?.Start("REDO"), true); AddShortcut(VirtualKey.A, VirtualKeyModifiers.Control, () => _commands?.Start("SELECTALL"), true);
+        AddShortcut(VirtualKey.Delete, VirtualKeyModifiers.None, () => { if (_commands?.Session.Selection.Count > 0) _commands.Start("ERASE"); }, true);
         AddShortcut(VirtualKey.F3, VirtualKeyModifiers.None, () => StatusBar.Toggle("OSNAP")); AddShortcut(VirtualKey.F7, VirtualKeyModifiers.None, () => StatusBar.Toggle("GRID")); AddShortcut(VirtualKey.F8, VirtualKeyModifiers.None, () => StatusBar.Toggle("ORTHO")); AddShortcut(VirtualKey.F9, VirtualKeyModifiers.None, () => StatusBar.Toggle("SNAP")); AddShortcut(VirtualKey.F10, VirtualKeyModifiers.None, () => StatusBar.Toggle("POLAR"));
         KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
-        SizeChanged += (_, _) => { var narrow = ActualWidth < 850; _paletteColumn.Width = narrow ? new GridLength(0) : new GridLength(_paletteWidth); Palette.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible; _title.Visibility = ActualWidth < 1100 ? Visibility.Collapsed : Visibility.Visible; };
+        SizeChanged += (_, _) => { var narrow = ActualWidth < 850; _paletteColumn.Width = narrow ? new GridLength(0) : new GridLength(_paletteWidth); Palette.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible; _title.Visibility = ActualWidth < 1200 ? Visibility.Collapsed : Visibility.Visible; };
     }
-    private void AddShortcut(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
+    private void AddShortcut(VirtualKey key, VirtualKeyModifiers modifiers, Action action, bool preserveTextEditing = false)
     {
-        var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers }; accelerator.Invoked += (_, e) => { action(); e.Handled = true; }; KeyboardAccelerators.Add(accelerator);
+        var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
+        accelerator.Invoked += (_, e) =>
+        {
+            if (preserveTextEditing && XamlRoot != null && FocusManager.GetFocusedElement(XamlRoot) is TextBox text && (text != CommandLine.Input || text.Text.Length != 0)) return;
+            action(); e.Handled = true;
+        };
+        KeyboardAccelerators.Add(accelerator);
     }
+    public void SetTitle(string name) => _title.Text = name + "  —  CadSpace";
     public void Bind(CadSession session, CommandEngine commands)
     {
-        _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); _title.Text = session.Document.Drawing.Name + "  —  CadSpace";
+        _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); SetTitle(session.Document.Drawing.Name);
     }
 }
