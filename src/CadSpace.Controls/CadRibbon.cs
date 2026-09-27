@@ -36,12 +36,12 @@ public sealed class CadRibbon : UserControl
         _groups.Children.Clear();
         switch (tab)
         {
-            case "Home": Group("Draw", "LINE", "PLINE", "CIRCLE", "ARC", "RECTANG", "ELLIPSE", "SPLINE", "3DPOLY"); Group("Modify", "MOVE", "COPY", "ROTATE", "TRIM", "FILLET", "OFFSET"); Group("Annotation", "TEXT", "DIMALIGNED"); Group("Block", "BLOCK", "INSERT"); Group("Utilities", "ERASE", "ZOOM"); break;
-            case "Modify": Group("Transform", "MOVE", "COPY", "ROTATE", "SCALE", "MIRROR"); Group("Line editing", "TRIM", "EXTEND", "FILLET", "CHAMFER", "BREAK", "JOIN"); Group("Patterns", "OFFSET", "ARRAY"); Group("Decompose", "EXPLODE", "ERASE"); break;
+            case "Home": Group("Draw", "LINE", "PLINE", "CIRCLE", "ARC", "RECTANG", "ELLIPSE", "SPLINE", "3DPOLY"); Group("Modify", "MOVE", "COPY", "ROTATE", "TRIM", "FILLET", "OFFSET", "STRETCH"); Group("Annotation", "TEXT", "DIMALIGNED"); Group("Block", "BLOCK", "INSERT"); Group("Utilities", "QSELECT", "SELECTSIMILAR", "ERASE", "ZOOM"); break;
+            case "Modify": Group("Transform", "MOVE", "COPY", "ROTATE", "SCALE", "MIRROR", "STRETCH"); Group("Line editing", "TRIM", "EXTEND", "FILLET", "CHAMFER", "BREAK", "JOIN"); Group("Patterns", "OFFSET", "ARRAY"); Group("Decompose", "EXPLODE", "ERASE"); break;
             case "Insert": Group("Block definitions", "BLOCK", "INSERT", "EXPLODE"); Group("Pattern", "ARRAY"); Group("Drawing", "POINT", "TEXT"); break;
             case "Annotate": Group("Text and dimensions", "TEXT", "DIMALIGNED"); Group("Fill", "HATCH"); Group("Inquiry", "DIST", "AREA"); break;
             case "3D Modeling": Group("Mesh primitives", "BOX", "CYLINDER", "SPHERE", "CONE"); Group("Mesh surfaces", "EXTRUDE", "REVOLVE", "SWEEP", "LOFT"); Group("Mesh Booleans", "UNION", "SUBTRACT", "INTERSECT"); Group("Modify", "MOVE", "ROTATE3D", "MIRROR3D", "ALIGN3D"); Group("View", "3DORBIT", "TOP", "ZOOM"); break;
-            case "View": Group("Viewport", "TOP", "3DORBIT", "ZOOM"); Group("Selection", "SELECTALL"); Group("History", "UNDO", "REDO"); Group("Command reference", "HELP"); break;
+            case "View": Group("Viewport", "TOP", "3DORBIT", "ZOOM"); Group("Selection", "QSELECT", "SELECTSIMILAR", "SELECTALL"); Group("History", "UNDO", "REDO"); Group("Command reference", "HELP", "RENDERSTATS"); break;
         }
     }
     private void Group(string title, params string[] commands)
@@ -51,7 +51,7 @@ public sealed class CadRibbon : UserControl
         foreach (var command in commands)
         {
             var info = CommandEngine.Commands.First(c => c.Name == command);
-            var label = command switch { "RECTANG" => "Rectangle", "PLINE" => "Polyline", "DIMALIGNED" => "Dimension", "3DORBIT" => "Orbit", "SELECTALL" => "Select all", _ => char.ToUpper(command[0]) + command[1..].ToLowerInvariant() };
+            var label = command switch { "RECTANG" => "Rectangle", "PLINE" => "Polyline", "DIMALIGNED" => "Dimension", "3DORBIT" => "Orbit", "SELECTALL" => "Select all", "QSELECT" => "Quick Select", "SELECTSIMILAR" => "Select similar", "RENDERSTATS" => "Statistics", _ => char.ToUpper(command[0]) + command[1..].ToLowerInvariant() };
             if(toolIndex==0) items.Children.Add(new CadToolButton(command,label,info.Description,()=>CommandRequested?.Invoke(command)));
             else
             {

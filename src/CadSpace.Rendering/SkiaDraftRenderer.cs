@@ -41,11 +41,7 @@ public sealed class SkiaDraftRenderer : IDisposable
             if (path.Closed) outline.Close();
             if (path.Filled) { _fill.Color = color; canvas.DrawPath(outline, _fill); }
             else canvas.DrawPath(outline, _stroke);
-            if (highlight && path.Points.Length < 20)
-            {
-                _fill.Color = new SKColor(70, 155, 247);
-                foreach (var vertex in path.Points) { var p = Pixel(camera, vertex); canvas.DrawRect(p.X - 3, p.Y - 3, 6, 6, _fill); }
-            }
+
         }
         _visibleTexts.Clear(); acceleration.Texts.Query(bounds, _visibleTexts, xyOnly:true); _visibleTexts.Sort();
         foreach (var index in _visibleTexts)

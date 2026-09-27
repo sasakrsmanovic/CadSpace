@@ -19,6 +19,7 @@ public sealed class CadCommandLine : UserControl
     private int _historyIndex;
     private bool _expanded;
     public event Action<bool>? HistoryExpanded;
+    public event Action? CancelRequested;
     public TextBox Input {get;}=new(){PlaceholderText="Type a command",FontFamily=new FontFamily("Consolas"),FontSize=12,BorderThickness=new Thickness(0),Background=CadTheme.Brush(0xFF20262E),Foreground=CadTheme.Brush(CadTheme.TextColor),Padding=new Thickness(8,5,8,5),MinHeight=30};
     public CadCommandLine()
     {
@@ -71,7 +72,7 @@ public sealed class CadCommandLine : UserControl
             if(!string.IsNullOrWhiteSpace(text)){_commands.Add(text);if(_commands.Count>200)_commands.RemoveAt(0);_historyIndex=_commands.Count;}
             _engine.Submit(text);e.Handled=true;
         }
-        else if(e.Key==VirtualKey.Escape){_engine.Cancel();Input.Text="";e.Handled=true;}
+        else if(e.Key==VirtualKey.Escape){CancelRequested?.Invoke();_engine.Cancel();Input.Text="";e.Handled=true;}
         else if(e.Key is VirtualKey.Up or VirtualKey.Down && _commands.Count>0)
         {_historyIndex=Math.Clamp(_historyIndex+(e.Key==VirtualKey.Up?-1:1),0,_commands.Count);Input.Text=_historyIndex<_commands.Count?_commands[_historyIndex]:"";Input.SelectionStart=Input.Text.Length;e.Handled=true;}
     }
