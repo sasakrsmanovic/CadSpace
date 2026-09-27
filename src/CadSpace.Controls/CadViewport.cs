@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Collections.Immutable;
 using CadSpace.Engine;
@@ -31,6 +30,7 @@ public sealed class CadViewport : Grid
     private Point _previous, _pressScreen;
     private bool _selecting, _dragged;
     private SnapResult _snap;
+    private double _lastCpuDrawMilliseconds;
     public Camera2D Camera { get; } = new();
     public Camera3D ModelCamera { get; } = new();
     public bool Is3D { get; private set; }
@@ -73,10 +73,10 @@ public sealed class CadViewport : Grid
         if (enabled && _model == null)
         {
             _model = new(this) { IsHitTestVisible = false }; Children.Insert(1, _model);
-            ((INotifyPropertyChanged)_model).PropertyChanged += (_, e) =>
+            _model.RegisterPropertyChangedCallback(GLCanvasElement.IsGLInitializedProperty, (_, _) =>
             {
-                if (e.PropertyName == nameof(GLCanvasElement.IsGLInitialized) && _model.IsGLInitialized == false) Fault("The 3D GPU context could not be initialized. The 2D drafting view remains available.");
-            };
+                if (_model.IsGLInitialized == false) Fault("The 3D GPU context could not be initialized. The 2D drafting view remains available.");
+            });
         }
         _draft.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         if (_model != null) _model.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
@@ -85,7 +85,15 @@ public sealed class CadViewport : Grid
         ModeChanged?.Invoke(enabled); Redraw();
     }
     private void OnView(string view) { if (view == "ZOOM") Fit(); else Set3D(view == "3DORBIT"); }
-    public void Redraw() { if (Is3D) _model?.Invalidate(); else _draft.Invalidate(); }
+    public void Redraw()
+    {
+        if (Is3D) _model?.Invalidate();
+        else
+        {
+            if (_session != null) _metrics.Text = $"{_session.Document.Drawing.Entities.Length} objects   •   previous CPU draw {_lastCpuDrawMilliseconds:0.0} ms";
+            _draft.Invalidate();
+        }
+    }
     private void Fault(string message) => DispatcherQueue.TryEnqueue(() => { Message?.Invoke(message); Set3D(false); });
     private Vec3 World(Point screen) => Camera.ScreenToWorld(screen.X, screen.Y);
     private void Pressed(object sender, PointerRoutedEventArgs e)
@@ -98,7 +106,7 @@ public sealed class CadViewport : Grid
         if (!current.Properties.IsLeftButtonPressed) return;
         if (_commands.IsActive)
         {
-            _snap = _session.Snap(_pressWorld, 9 / Camera.PixelsPerUnit, _commands.ReferencePoint); _commands.Point(_snap.Point);
+            _snap = _session.Snap(_pressWorld, 9 / Camera.PixelsPerUnit, _commands.ReferencePoint); _cursor = _snap.Point; _commands.Point(_snap.Point);
         }
         else { _selecting = true; CapturePointer(e.Pointer); }
         Redraw(); e.Handled = true;
@@ -149,9 +157,8 @@ public sealed class CadViewport : Grid
                 catch (NotSupportedException) { /* A preview must never invalidate a valid drawing. */ }
             }
             _renderer.DrawInteraction(canvas, owner.Camera, owner._cursor, owner._inside, owner._snap.Kind is SnapKind.None or SnapKind.Grid ? null : owner._snap.Kind.ToString(), owner._selecting && owner._dragged ? owner._pressWorld : null);
-            var elapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            // CPU draw-recording time, deliberately not labeled GPU time or FPS.
-            owner.DispatcherQueue.TryEnqueue(() => owner._metrics.Text = $"{session.Document.Drawing.Entities.Length} objects   •   CPU draw {elapsed:0.0} ms");
+            // Recording CPU time does not enqueue another frame or mislabel this as GPU time/FPS.
+            owner._lastCpuDrawMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         }
     }
     private sealed class ModelSurface(CadViewport owner) : GLCanvasElement(null)
