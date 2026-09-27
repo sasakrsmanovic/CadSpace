@@ -111,11 +111,12 @@ async def main():
             try:
                 await recovery_page.goto(os.environ.get('CADSPACE_URL','http://127.0.0.1:8177/CadSpace/'),wait_until='domcontentloaded')
                 await recovery_page.wait_for_function("document.title.includes('CadSpace')",timeout=90000);await recovery_page.wait_for_timeout(3000)
+                await wait_recovery('CADSPACE_RECOVERY: ready backend=IndexedDB')
                 await recovery_page.keyboard.press('Control+n');await recovery_page.wait_for_timeout(400);await recovery_page.mouse.click(300,956)
                 for value in ('LINE','0,0','200,0','','ZOOM'):
                     await recovery_page.keyboard.type(value);await recovery_page.keyboard.press('Enter')
                 await wait_recovery('CADSPACE_RECOVERY: saved generation=1 objects=1')
-                await recovery_page.wait_for_timeout(1500) # allow the browser filesystem sync to finish
+                # The completion event must guarantee durability; reload without a flush delay.
                 await recovery_page.reload(wait_until='domcontentloaded');await recovery_page.wait_for_function("document.title.includes('CadSpace')",timeout=90000);await recovery_page.wait_for_timeout(3000)
                 await recovery_page.mouse.click(1515,16);await recovery_page.wait_for_timeout(400)
                 await recovery_page.screenshot(path=str(output/'25-recovery-dialog.png'),full_page=True)

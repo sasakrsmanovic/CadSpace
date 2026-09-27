@@ -38,10 +38,12 @@ jobs:
       - name: Advanced exchange, performance and independent audit
         env:
           CADSPACE_EXCHANGE_OUTPUT: artifacts/dxf-audit
+          CADSPACE_STYLE_OUTPUT: artifacts/styles-audit
         run: |
           dotnet run --project tests/CadSpace.Advanced.Tests -c Release
           dotnet run --project tests/CadSpace.Performance.Tests -c Release
           python tests/fixtures/audit.py
+          python tests/fixtures/audit_styles.py artifacts/styles-audit
   desktop:
     needs: verify
     strategy:
