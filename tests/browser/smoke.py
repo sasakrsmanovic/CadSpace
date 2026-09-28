@@ -3,6 +3,7 @@ import asyncio,json,os,re
 from pathlib import Path
 from playwright.async_api import async_playwright
 from PIL import Image
+from ui_helpers import click as click_ui
 
 ROI=(200,240,1120,760)
 def crop(path):return Image.open(path).convert('RGB').crop(ROI)
@@ -89,7 +90,7 @@ async def main():
             assert difference(original,await shot('20-stretch.png'))>500,'Crossing STRETCH must move the enclosed endpoint'
             await command('UNDO');assert difference(original,await shot('21-stretch-undo.png'))<15
             # The ribbon dialog is a real selection workflow; defaults select both visible objects.
-            await page.mouse.click(937,96);await page.wait_for_timeout(400);await shot('22-quick-select.png')
+            await click_ui(page,events,"command.QSELECT");await page.wait_for_timeout(400);await shot('22-quick-select.png')
             await page.keyboard.press('Enter');await page.wait_for_timeout(400)
             await command('ERASE');empty=await shot('23-quick-select-erased.png')
             assert difference(original,empty)>1000,'Quick Select dialog must select both primitives for erase'
@@ -118,7 +119,7 @@ async def main():
                 await wait_recovery('CADSPACE_RECOVERY: saved generation=1 objects=1')
                 # The completion event must guarantee durability; reload without a flush delay.
                 await recovery_page.reload(wait_until='domcontentloaded');await recovery_page.wait_for_function("document.title.includes('CadSpace')",timeout=90000);await recovery_page.wait_for_timeout(3000)
-                await recovery_page.mouse.click(1515,16);await recovery_page.wait_for_timeout(400)
+                await recovery_page.keyboard.press("Control+Shift+r");await recovery_page.wait_for_timeout(400)
                 await recovery_page.screenshot(path=str(output/'25-recovery-dialog.png'),full_page=True)
                 await recovery_page.keyboard.press('Enter');await wait_recovery('CADSPACE_RECOVERY: restored objects=1')
                 assert '*' in await recovery_page.title(),'Recovered drawing must remain unsaved'

@@ -24,6 +24,16 @@ public sealed class CommandEngine(CadSession session)
     public event Action<string>? ViewRequested;
     public static IReadOnlyList<CommandInfo> Commands { get; } = new CommandInfo[]
     {
+        new("UISTATS", "UISTATS", "Report rendered control bounds and workspace state", "Workspace"),
+        new("PROPERTIES", "PR", "Show the Properties palette", "Workspace"),
+        new("PROPERTIESCLOSE", "PROPERTIESCLOSE", "Hide the Properties palette", "Workspace"),
+        new("TOOLPALETTES", "TP", "Show searchable tool and block palettes", "Workspace"),
+        new("TOOLPALETTESCLOSE", "TOOLPALETTESCLOSE", "Hide Tool Palettes", "Workspace"),
+        new("RIBBON", "RIBBON", "Show the expanded ribbon", "Workspace"),
+        new("RIBBONCLOSE", "RIBBONCLOSE", "Minimize the ribbon to tabs", "Workspace"),
+        new("CLEANSCREENON", "CLEANSCREENON", "Hide ribbon and palettes without changing the drawing", "Workspace"),
+        new("CLEANSCREENOFF", "CLEANSCREENOFF", "Restore the saved workspace controls", "Workspace"),
+        new("OPTIONS", "OP", "Workspace and display preferences", "Workspace"),
         new("RENDERSTATS", "RS", "Report actual scene, overlay and GPU draw counts", "View"),
         new("STRETCH", "S", "Crossing corners, base point and displacement point; supported vertices", "Modify"),
         new("QSELECT", "QS", "Filter kind,layer,mode,scope; * wildcard, Replace/Add/Remove, All/Selection", "Edit"),
@@ -86,6 +96,17 @@ public sealed class CommandEngine(CadSession session)
                     case "SELECTALL": Session.SelectAll(); Cancel(); return;
                     case "SELECTSIMILAR": Session.SelectSimilar(); Cancel(); return;
                     case "HELP": Message?.Invoke(string.Join("  ·  ", Commands.Select(c => $"{c.Name} ({c.Alias})"))); Cancel(); return;
+                    case "UISTATS":
+                    case "PROPERTIES":
+                    case "PROPERTIESCLOSE":
+                    case "TOOLPALETTES":
+                    case "TOOLPALETTESCLOSE":
+                    case "RIBBON":
+                    case "RIBBONCLOSE":
+                    case "CLEANSCREENON":
+                    case "CLEANSCREENOFF":
+                    case "OPTIONS":
+                        ViewRequested?.Invoke(_active); Cancel(); return;
                     case "RENDERSTATS": case "LAYER": case "LINETYPE": case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
                     case "AREA":
                         var polygons = Session.EditableSelection().OfType<PolylineEntity>().Where(p => p.Closed).ToArray();

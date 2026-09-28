@@ -84,7 +84,7 @@ public sealed class Camera3D
         var yaw = GeometryMath.Radians(Yaw); var pitch = GeometryMath.Radians(Pitch);
         var eye = TargetOffset + new Vec3(Math.Cos(yaw) * Math.Cos(pitch), Math.Sin(yaw) * Math.Cos(pitch), Math.Sin(pitch)) * Distance;
         static Vector3 F(Vec3 p) => new((float)p.X, (float)p.Y, (float)p.Z);
-        var view = Matrix4x4.CreateLookAt(F(eye), F(TargetOffset), Vector3.UnitZ);
+        var view = Matrix4x4.CreateLookAt(F(eye), F(TargetOffset), F(Up));
         var near = (float)Math.Max(1e-5, Distance / 10000); var far = (float)(Distance * 100);
         var f = 1f / MathF.Tan(MathF.PI / 8);
         var projection = new Matrix4x4(f / (float)Math.Max(0.01, aspect), 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0);
