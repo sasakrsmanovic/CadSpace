@@ -52,3 +52,12 @@ Release enables IL and XAML resource trimming plus the runtime jiterpreter. `-p:
 ## Next performance qualification
 
 Measure cold index/tessellation time and peak memory, real imported block-heavy/hatch-heavy files, long polylines, large block-dependent edits, large/crowded window selection, complex drag previews, text atlas pressure, viewport readback and physical display timing. Introduce budgets from those measurements before claiming broad CAD-scale performance.
+
+
+## Immutable scene bounds
+
+`DrawingScene.Bounds` now caches its original fit calculation by immutable scene identity in a weak table. The first read still scans geometry; repeated reads reuse the result without retaining dead scenes. Record copies have independent cache entries. The conservative text bounds used for selection remain separate, so this optimization does not change fit behavior.
+
+The bounds regression compares 100 warmed reads on a 100,000-path scene with the previous LINQ implementation, asserting exactly equal bounds and recording cumulative current-thread allocations. One CI run recorded **0.019 ms and 0 allocated bytes** for cached reads versus **1537.878 ms and 560,049,600 allocated bytes** for the former repeated scan. This intentionally repeated-query workload measures avoided work, not cold scene construction, whole-application speed, import latency, rendering or GPU frame rate. Timing is not a pass/fail gate.
+
+The native-width increment also introduces a one-pass LWPOLYLINE vertex decoder that retains widths and stops before XDATA. No measured end-to-end DXF import speedup is claimed. Wide polyline rendering emits one filled outline per strip and explicit GPU triangles; geometric edits still pay tessellation and upload costs.

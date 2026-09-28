@@ -151,8 +151,8 @@ public static class DxfCodec
                 case ArcEntity arc: Start("ARC", "AcDbCircle"); Position(10, arc.Center); Pair(40, arc.Radius); Pair(100, "AcDbArc"); Pair(50, arc.StartAngle); Pair(51, arc.EndAngle); break;
                 case PolylineEntity poly:
                     if (poly.Vertices.Any(v => Math.Abs(v.Position.Z - poly.Vertices[0].Position.Z) > 1e-8)) throw new NotSupportedException("LWPOLYLINE requires a constant elevation.");
-                    Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, poly.Vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, poly.Vertices[0].Position.Z);
-                    foreach (var v in poly.Vertices) { Pair(10, v.Position.X); Pair(20, v.Position.Y); if (v.Bulge != 0) Pair(42, v.Bulge); } break;
+                    Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, poly.Vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, poly.Vertices[0].Position.Z); if (poly.ConstantWidth != 0) Pair(43, poly.ConstantWidth);
+                    foreach (var v in poly.Vertices) { Pair(10, v.Position.X); Pair(20, v.Position.Y); if (v.Bulge != 0) Pair(42, v.Bulge); if (v.StartWidth != 0) Pair(40, v.StartWidth); if (v.EndWidth != 0) Pair(41, v.EndWidth); } break;
                 case EllipseEntity ellipse: Start("ELLIPSE", "AcDbEllipse"); Position(10, ellipse.Center); Position(11, ellipse.MajorAxis); Pair(40, ellipse.Ratio); Pair(41, ellipse.StartParameter); Pair(42, ellipse.EndParameter); break;
                 case TextEntity text:
                     Start(text.Multiline ? "MTEXT" : "TEXT", text.Multiline ? "AcDbMText" : "AcDbText"); Position(10, text.Position); Pair(40, text.Height);

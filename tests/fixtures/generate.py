@@ -31,6 +31,18 @@ doc.saveas(root/'independent-r2013.dxf');doc.saveas(root/'independent-r2013-bina
 # A real byte-code R12 fixture, not text mislabeled binary.
 r12=ezdxf.new('R12');r12.modelspace().add_line((1,2,3),(4,5,6));r12.saveas(root/'independent-r12-binary.dxf',fmt='bin')
 
+# Native widths: independently generated, no CadSpace writer involved.
+w=ezdxf.new('R2013'); wm=w.modelspace()
+wm.add_lwpolyline([(0,0),(100,0)], dxfattribs={'const_width':8})
+wm.add_lwpolyline([(0,20,2,12,0),(100,20,0,0,0)], format='xyseb')
+wm.add_lwpolyline([(-50,50,6,10,1),(50,50,4,8,0)], format='xyseb')
+wm.add_lwpolyline([(0,0),(40,0),(40,30)], dxfattribs={'const_width':6,'elevation':12,'extrusion':(1,2,3)})
+wm.add_lwpolyline([(0,100,2,3,0),(100,100,4,5,0),(100,140,6,7,0)],format='xyseb',close=True)
+w.saveas(root/'independent-widths.dxf');w.saveas(root/'independent-widths-binary.dxf',fmt='bin')
+l=ezdxf.new('R12');lp=l.modelspace().add_polyline2d([(0,0),(100,0),(100,50)],dxfattribs={'default_start_width':4,'default_end_width':6})
+lp.vertices[1].dxf.start_width=8;lp.vertices[1].dxf.end_width=3
+l.saveas(root/'independent-widths-r12.dxf')
+
 import zipfile
 with zipfile.ZipFile(root / 'independent.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
     for source in sorted(root.glob('independent-*.dxf')):

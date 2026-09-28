@@ -22,10 +22,9 @@ internal static class DxfEntityReader
             case "CIRCLE": entity = InPlane(new CircleEntity(P(header, 10), Positive(header, 40))); break;
             case "ARC": entity = InPlane(new ArcEntity(P(header, 10), Positive(header, 40), N(header, 50), N(header, 51))); break;
             case "LWPOLYLINE":
-                if (header.Any(p => p.Code is 40 or 41 or 43 && Number(p.Value) != 0)) throw new NotSupportedException("Variable-width polyline faces are not implemented.");
-                var points = Vertices(header, N(header, 38));
+                var points = DxfVertexData.Polyline(header.AsSpan(), N(header, 38));
                 if (I(header, 90, points.Length) != points.Length) throw new FormatException("LWPOLYLINE vertex count mismatch.");
-                entity = InPlane(new PolylineEntity(points, (I(header, 70) & 1) != 0) { ContinuousLinetype = (I(header, 70) & 128) != 0 }); break;
+                entity = InPlane(new PolylineEntity(points, (I(header, 70) & 1) != 0) { ConstantWidth = N(header, 43), ContinuousLinetype = (I(header, 70) & 128) != 0 }); break;
             case "POLYLINE": entity = LegacyPolyline(header, pieces.Skip(1).ToArray(), InPlane, warn); break;
             case "SPLINE": entity = Spline(header); break;
             case "ELLIPSE":
@@ -143,9 +142,8 @@ internal static class DxfEntityReader
         }
         if ((flags & 6) != 0) throw new NotSupportedException("Curve-fit legacy POLYLINE requires its fitted-curve interpreter.");
         if ((flags & 8) != 0) return new Polyline3DEntity(vertices.Select(v => P(v, 10)).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 };
-        if (N(header, 40) != 0 || N(header, 41) != 0 || vertices.Any(v => N(v, 40) != 0 || N(v, 41) != 0)) throw new NotSupportedException("Wide legacy POLYLINE is retained without flattening widths.");
         var elevation = N(header, 30);
-        return inPlane(new PolylineEntity(vertices.Select(v => new PolyVertex(new(P(v, 10).X, P(v, 10).Y, elevation), N(v, 42))).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 });
+        return inPlane(new PolylineEntity(vertices.Select(v => new PolyVertex(new(P(v, 10).X, P(v, 10).Y, elevation), N(v, 42)) { StartWidth = N(v, 40, N(header, 40)), EndWidth = N(v, 41, N(header, 41)) }).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 });
     }
 
     private static SplineEntity Spline(ImmutableArray<DxfPair> p)

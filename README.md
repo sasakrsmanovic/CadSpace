@@ -26,7 +26,7 @@ The startup document is an editable studio floor plan. **3D example** opens a se
 | 3D viewing | Depth-tested shading, feature edges, picking/highlights, world-plane plain text, projection, uncapped clipping, pan/orbit and anchored zoom |
 | Files | ASCII/binary DXF and supported code pages; native MESH/SPLINE/HATCH/style output; original-record preservation; native projects and local recovery |
 
-The registry contains **64 command workflows**, not every option of their AutoCAD namesakes. Exact inputs and restrictions are in [Commands](docs/COMMANDS.md).
+The registry contains **66 command workflows**, not every option of their AutoCAD namesakes. Exact inputs and restrictions are in [Commands](docs/COMMANDS.md).
 
 ### Layer and linetype managers
 
@@ -155,10 +155,14 @@ dotnet run --project tests/CadSpace.Advanced.Tests -c Release
 dotnet run --project tests/CadSpace.Performance.Tests -c Release
 ```
 
-The five suites contain **258 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
+The five suites contain **300 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
 
 Current-main builds deploy to GitHub Pages and verify the served commit. Tagged releases run headless checks/audits and package desktop/browser/source distributions with checksums. NuGet.org publication, signing and notarization are not automatic.
 
 Software-backed Chromium is not physical-GPU qualification. The Uno graphics host still uses framebuffer readback with a pinned RGBA adapter; it is **not zero-copy WebGPU/Vulkan**. Full AutoCAD UI/API, analytic solids, typography, dynamic blocks, constraints, paper-space viewports/plotting and industrial interoperability remain substantial work. See [Coverage](docs/FEATURES.md).
 
 MIT licensed. Read [Contributing](CONTRIBUTING.md), [Security](SECURITY.md) and [Third-party notices](THIRD-PARTY-NOTICES.md). CadSpace is independent of Autodesk and contains no Autodesk source, icons, fonts, ACIS or RealDWG components.
+
+### Native wide polylines
+
+`PLINEWID` sets the width of new polylines and rectangles. Select polylines and use `PEDIT` → `Width`, `Open`, `Close` or `Reverse`. Properties exposes global width and a vertex-indexed segment editor without allocating one control per vertex. Native DXF and project files retain constant/tapered widths and bulges; OCS widths render as 3D faces. Read [supported width semantics and limits](docs/WIDE-POLYLINES.md).

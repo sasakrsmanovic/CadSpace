@@ -21,10 +21,16 @@ public sealed record LineEntity(Vec3 Start, Vec3 End) : Entity { public override
 public sealed record PointEntity(Vec3 Position) : Entity { public override string Kind => "POINT"; }
 public sealed record CircleEntity(Vec3 Center, double Radius) : Entity { public override string Kind => "CIRCLE"; }
 public sealed record ArcEntity(Vec3 Center, double Radius, double StartAngle, double EndAngle) : Entity { public override string Kind => "ARC"; }
-public readonly record struct PolyVertex(Vec3 Position, double Bulge = 0);
+public readonly record struct PolyVertex(Vec3 Position, double Bulge = 0)
+{
+    public double StartWidth { get; init; }
+    public double EndWidth { get; init; }
+}
 public sealed record PolylineEntity(ImmutableArray<PolyVertex> Vertices, bool Closed = false) : Entity
 {
     public override string Kind => "LWPOLYLINE";
+    public double ConstantWidth { get; init; }
+    public bool HasWidth => ConstantWidth > 0 || Vertices.Any(v => v.StartWidth > 0 || v.EndWidth > 0);
     public bool ContinuousLinetype { get; init; }
     public static PolylineEntity FromPoints(IEnumerable<Vec3> points, bool closed = false) => new(points.Select(p => new PolyVertex(p)).ToImmutableArray(), closed);
 }

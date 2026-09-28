@@ -49,6 +49,7 @@ Test("mesh Boolean selection is undoable", () => { var session=new CadSpace.Engi
 Test("mesh Boolean cancellation does not edit operands", () => { using var cancel=new CancellationTokenSource();cancel.Cancel();var rejected=false;try { MeshBoolean.Apply(MeshFactory.Box(default,new(10,10,10)),MeshFactory.Box(new(5,0,0),new(15,10,10)),MeshBooleanOperation.Union,cancel.Token); } catch(OperationCanceledException) {rejected=true;} Check(rejected); });
 Test("hidden layer clears stale selection", () => { var session=new CadSpace.Engine.CadSession();session.Add("Point",new PointEntity(default));session.SelectAll();session.Document.Edit("Hide",s=>s with {Layers=s.Layers.SetItem("0",new Layer("0",Visible:false))});Check(session.Selection.Count==0); });
 Test("top-view selection projects elevated geometry", () => {var session=new CadSpace.Engine.CadSession();var line=new LineEntity(new(0,0,100),new(10,0,100));session.Add("Line",line);Check(session.HitTest(new(5,0),1)==line.Id);});
+PolylineWidthRegression.Register(Test);
 var failures = 0;
 foreach (var (name, run) in tests) try { run(); Console.WriteLine($"PASS {name}"); } catch (Exception e) { failures++; Console.Error.WriteLine($"FAIL {name}: {e}"); }
 Console.WriteLine($"{tests.Count - failures}/{tests.Count} advanced geometry tests passed.");

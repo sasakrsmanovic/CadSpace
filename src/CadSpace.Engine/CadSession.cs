@@ -36,6 +36,7 @@ public sealed partial class CadSession
     public string CurrentLayer { get; set; } = "0";
     public string CurrentLinetype { get; set; } = "BYLAYER";
     public double CurrentLinetypeScale { get; set; } = 1;
+    public double CurrentPolylineWidth { get; set; }
     public bool GridVisible { get; set; } = true;
     public bool GridSnap { get; set; }
     public bool ObjectSnap { get; set; } = true;
@@ -146,6 +147,8 @@ public sealed partial class CadSession
         {
             switch (entity)
             {
+                case PolylineEntity { HasWidth: true }:
+                    throw new NotSupportedException("EXPLODE would discard polyline width. Set width to zero with PEDIT first, or keep the native wide polyline.");
                 case PolylineEntity poly:
                     for (var i = 0; i < poly.Vertices.Length - (poly.Closed ? 0 : 1); i++)
                     {

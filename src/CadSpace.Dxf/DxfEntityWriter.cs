@@ -81,12 +81,22 @@ internal static class DxfEntityWriter
                     var similarity = Math.Abs(t.X.Dot(t.Y)) <= 1e-8 * t.X.Length * t.Y.Length && Math.Abs(t.X.Length - t.Y.Length) <= 1e-8 * Math.Max(t.X.Length, t.Y.Length);
                     if (similarity)
                     {
-                        var vertices = poly.Vertices.Select(v => new PolyVertex(inverse.Point(t.Point(v.Position)), v.Bulge)).ToArray();
-                        Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, vertices[0].Position.Z); Point(210, frame.Z);
-                        foreach (var vertex in vertices) { Pair(10, vertex.Position.X); Pair(20, vertex.Position.Y); if (vertex.Bulge != 0) Pair(42, vertex.Bulge); }
+                        var vertices = poly.Vertices.Select(v => v with { Position = inverse.Point(t.Point(v.Position)), StartWidth = v.StartWidth * t.X.Length, EndWidth = v.EndWidth * t.X.Length }).ToArray();
+                        Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, vertices[0].Position.Z); Point(210, frame.Z); if (poly.ConstantWidth != 0) Pair(43, poly.ConstantWidth * t.X.Length);
+                        foreach (var vertex in vertices) { Pair(10, vertex.Position.X); Pair(20, vertex.Position.Y); if (vertex.Bulge != 0) Pair(42, vertex.Bulge); if (vertex.StartWidth != 0) Pair(40, vertex.StartWidth); if (vertex.EndWidth != 0) Pair(41, vertex.EndWidth); }
                     }
                     else
                     {
+                        if (poly.HasWidth)
+                        {
+                            warn("An affinely deformed wide polyline is exported as sampled mesh faces, not editable polyline widths. Save a native project to retain the analytic source.");
+                            foreach (var strip in PolylineWidths.Build(poly))
+                            {
+                                Entity display = strip.Triangles.IsEmpty ? new Polyline3DEntity(strip.Vertices) : new MeshEntity(strip.Vertices, strip.Triangles, "Polyline width");
+                                buffer.Append(emit(Style(EntityGeometry.Transform(display, t))));
+                            }
+                            break;
+                        }
                         warn("An affinely deformed bulged polyline is exported as a sampled 3D polyline.");
                         buffer.Append(emit(Style(new Polyline3DEntity(EntityGeometry.PolylinePoints(poly).Select(t.Point).ToImmutableArray(), poly.Closed) { ContinuousLinetype = poly.ContinuousLinetype })));
                     }

@@ -15,7 +15,7 @@ public sealed record SceneText(Guid EntityId, string Layer, uint Color, Vec3 Pos
 public sealed record SceneTriangle(Guid EntityId, uint Color, Vec3 A, Vec3 B, Vec3 C);
 public sealed record DrawingScene(ImmutableArray<ScenePath> Paths, ImmutableArray<SceneText> Texts, ImmutableArray<SceneTriangle> Triangles)
 {
-    public Bounds3 Bounds => Bounds3.From(Paths.SelectMany(p => p.Points).Concat(Texts.SelectMany(t => new[] { t.Position, t.Position + t.AxisX * (t.Height * Math.Max(1, t.Text.Length) * .65) + t.AxisY * t.Height })).Concat(Triangles.SelectMany(t => new[] { t.A, t.B, t.C })));
+    public Bounds3 Bounds => SceneBounds.For(this);
 }
 
 public static class EntityGeometry
@@ -105,6 +105,24 @@ public static class EntityGeometry
                 case PointEntity point: Path([point.Position]); break;
                 case CircleEntity circle: Path(Curve(circle.Center, circle.Radius, 0, 360), true); break;
                 case ArcEntity arc: Path(Curve(arc.Center, arc.Radius, arc.StartAngle, GeometryMath.NormalizeAngle(arc.EndAngle - arc.StartAngle))); break;
+                case PolylineEntity polyline when polyline.HasWidth:
+                    // Keep a filled outline per segment, not one Skia path per triangle.
+                    // Faces are explicit geometry and remain pickable away from the centerline.
+                    foreach (var strip in PolylineWidths.Build(polyline))
+                    {
+                        if (strip.Triangles.IsEmpty) { Path(strip.Vertices); continue; }
+                        Path(strip.Outline, true, true);
+                        for (var i = 0; i < strip.Triangles.Length; i += 3)
+                        {
+                            var a = transform.Point(strip.Vertices[strip.Triangles[i]]);
+                            var b = transform.Point(strip.Vertices[strip.Triangles[i + 1]]);
+                            var c = transform.Point(strip.Vertices[strip.Triangles[i + 2]]);
+                            if (transform.Determinant < 0) (b, c) = (c, b);
+                            if (triangles.Count >= 1000000) throw new ArgumentException("Expanded scene exceeds one million triangles.");
+                            triangles.Add(new(root, color, a, b, c));
+                        }
+                    }
+                    break;
                 case PolylineEntity polyline:
                     if (pattern != null && !polyline.ContinuousLinetype)
                     {
@@ -178,7 +196,7 @@ public static class EntityGeometry
             MeshEntity m => m with { Vertices = m.Vertices.Select(transform.Point).ToImmutableArray(), Triangles = transform.Determinant < 0 ? m.Triangles.Chunk(3).SelectMany(t => new[] { t[0], t[2], t[1] }).ToImmutableArray() : m.Triangles },
             CircleEntity c when xySimilarity => c with { Center = transform.Point(c.Center), Radius = c.Radius * scale },
             ArcEntity a when xySimilarity => a with { Center = transform.Point(a.Center), Radius = a.Radius * scale, StartAngle = Angle(mirror ? a.EndAngle : a.StartAngle), EndAngle = Angle(mirror ? a.StartAngle : a.EndAngle) },
-            PolylineEntity p when xySimilarity => p with { Vertices = p.Vertices.Select(v => new PolyVertex(transform.Point(v.Position), mirror ? -v.Bulge : v.Bulge)).ToImmutableArray() },
+            PolylineEntity p when xySimilarity => p with { ConstantWidth = p.ConstantWidth * scale, Vertices = p.Vertices.Select(v => v with { Position = transform.Point(v.Position), Bulge = mirror ? -v.Bulge : v.Bulge, StartWidth = v.StartWidth * scale, EndWidth = v.EndWidth * scale }).ToImmutableArray() },
             EllipseEntity e when xySimilarity && !mirror => e with { Center = transform.Point(e.Center), MajorAxis = transform.Vector(e.MajorAxis) },
             TextEntity t when xySimilarity && !mirror => t with { Position = transform.Point(t.Position), Height = t.Height * scale, Rotation = Angle(t.Rotation) },
             DimensionEntity d when xySimilarity => d with { First = transform.Point(d.First), Second = transform.Point(d.Second), Location = transform.Point(d.Location) },

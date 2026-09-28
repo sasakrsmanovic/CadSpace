@@ -186,8 +186,8 @@ public static class CadProjectCodec
                 case CircleEntity e: Point(w, "center", e.Center); w.WriteNumber("radius", e.Radius); break;
                 case ArcEntity e: Point(w, "center", e.Center); w.WriteNumber("radius", e.Radius); w.WriteNumber("start", e.StartAngle); w.WriteNumber("end", e.EndAngle); break;
                 case PolylineEntity e:
-                    w.WriteBoolean("closed", e.Closed); w.WriteBoolean("continuousLinetype", e.ContinuousLinetype); w.WritePropertyName("vertices"); w.WriteStartArray();
-                    foreach (var v in e.Vertices) { w.WriteStartObject(); Point(w, "point", v.Position); w.WriteNumber("bulge", v.Bulge); w.WriteEndObject(); } w.WriteEndArray(); break;
+                    w.WriteBoolean("closed", e.Closed); w.WriteNumber("constantWidth", e.ConstantWidth); w.WriteBoolean("continuousLinetype", e.ContinuousLinetype); w.WritePropertyName("vertices"); w.WriteStartArray();
+                    foreach (var v in e.Vertices) { w.WriteStartObject(); Point(w, "point", v.Position); w.WriteNumber("bulge", v.Bulge); w.WriteNumber("startWidth", v.StartWidth); w.WriteNumber("endWidth", v.EndWidth); w.WriteEndObject(); } w.WriteEndArray(); break;
                 case EllipseEntity e: Point(w, "center", e.Center); Point(w, "major", e.MajorAxis); w.WriteNumber("ratio", e.Ratio); w.WriteNumber("start", e.StartParameter); w.WriteNumber("end", e.EndParameter); break;
                 case TextEntity e: Point(w, "point", e.Position); w.WriteString("text", e.Text); w.WriteNumber("height", e.Height); w.WriteNumber("rotation", e.Rotation); break;
                 case DimensionEntity e: Point(w, "a", e.First); Point(w, "b", e.Second); Point(w, "location", e.Location); break;
@@ -225,7 +225,7 @@ public static class CadProjectCodec
                 "POINT" => new PointEntity(P(e, "point")),
                 "CIRCLE" => new CircleEntity(P(e, "center"), N(e, "radius")),
                 "ARC" => new ArcEntity(P(e, "center"), N(e, "radius"), N(e, "start"), N(e, "end")),
-                "LWPOLYLINE" => new PolylineEntity(e.GetProperty("vertices").EnumerateArray().Select(v => new PolyVertex(P(v, "point"), N(v, "bulge"))).ToImmutableArray(), e.GetProperty("closed").GetBoolean()) { ContinuousLinetype = e.TryGetProperty("continuousLinetype", out var generated) && generated.GetBoolean() },
+                "LWPOLYLINE" => new PolylineEntity(e.GetProperty("vertices").EnumerateArray().Select(v => new PolyVertex(P(v, "point"), N(v, "bulge")) { StartWidth = v.TryGetProperty("startWidth", out var sw) ? sw.GetDouble() : 0, EndWidth = v.TryGetProperty("endWidth", out var ew) ? ew.GetDouble() : 0 }).ToImmutableArray(), e.GetProperty("closed").GetBoolean()) { ConstantWidth = e.TryGetProperty("constantWidth", out var cw) ? cw.GetDouble() : 0, ContinuousLinetype = e.TryGetProperty("continuousLinetype", out var generated) && generated.GetBoolean() },
                 "ELLIPSE" => new EllipseEntity(P(e, "center"), P(e, "major"), N(e, "ratio"), N(e, "start"), N(e, "end")),
                 "TEXT" or "MTEXT" => new TextEntity(P(e, "point"), S(e, "text"), N(e, "height"), N(e, "rotation"), type == "MTEXT"),
                 "DIMENSION" => new DimensionEntity(P(e, "a"), P(e, "b"), P(e, "location")),
