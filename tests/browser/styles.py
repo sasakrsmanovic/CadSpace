@@ -62,8 +62,10 @@ async def main():
             async def fill(x, y, text, expected=None):
                 # Uno Skia uses a shared offscreen native keyboard input. Its DOM
                 # rectangle/handle do not identify the rendered TextBox. Let the
-                # pointer focus transition complete before sending keyboard events;
+                # pointer focus transition complete, then reassert it before typing;
                 # assert known field values and the final committed drawing below.
+                await page.mouse.click(x, y)
+                await page.wait_for_timeout(350)
                 await page.mouse.click(x, y)
                 await page.wait_for_timeout(350)
                 await page.wait_for_function("""() => {
@@ -71,17 +73,19 @@ async def main():
                     return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement;
                 }""", timeout=3000)
                 if expected is not None:
-                    assert await page.evaluate('() => document.activeElement.value') == expected
+                    actual = await page.evaluate('() => document.activeElement.value')
+                    assert actual == expected, f'Field {(x,y)}: expected {expected!r}, got {actual!r}'
                 await page.keyboard.press('Control+a')
                 await page.keyboard.type(text, delay=15)
                 await page.wait_for_timeout(150)
                 assert await page.evaluate('() => document.activeElement.value') == text
             await command('LAYER')
             await fill(500,606,'QA_TEMP');await page.mouse.click(675,606);await page.wait_for_timeout(300)
-            await page.mouse.click(490,376);await page.wait_for_timeout(200)
+            await capture('36a-layer-created-selected.png')
             await fill(490,673,'QA_LAYER',expected='QA_TEMP');await fill(650,673,'12ABEF',expected='D8DFE8');await fill(889,673,'0.50',expected='0.25')
             await page.mouse.click(1128,673);await page.wait_for_timeout(350)
-            await page.mouse.click(490,376);await page.mouse.click(778,606);await page.wait_for_timeout(200)
+            await capture('36b-layer-renamed-selected.png')
+            await page.mouse.click(778,606);await page.wait_for_timeout(200)
             await capture('36-layer-manager-edited.png')
             await page.keyboard.press('Escape');await page.wait_for_timeout(200)
             await command('TOP','LINE','0,20','240,20','')

@@ -57,7 +57,23 @@ public sealed partial class CadLayerManager : UserControl
     }
     private void OnSearch(object sender, TextChangedEventArgs args) => Filter();
     private void OnSelected(object sender, SelectionChangedEventArgs args) { if (!_refreshing) EditSelection(); }
-    private void OnAdd(object sender, RoutedEventArgs args) => Execute(s => { s.AddLayer(NewName.Text.Trim()); NewName.Text = ""; });
+    private void SelectLayer(string name)
+    {
+        // Keep the edited layer in view, even when its new name no longer matches a filter.
+        if (!name.Contains(Search.Text, StringComparison.OrdinalIgnoreCase)) { Search.Text = ""; Filter(); }
+        if (Layers.ItemsSource is not CadLayerRow[] rows) return;
+        var row = rows.FirstOrDefault(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (row == null) return;
+        Layers.SelectedItem = row;
+        Layers.ScrollIntoView(row);
+        EditSelection();
+    }
+    private void OnAdd(object sender, RoutedEventArgs args) => Execute(s =>
+    {
+        var name = NewName.Text.Trim();
+        s.AddLayer(name); NewName.Text = "";
+        SelectLayer(name);
+    });
     private void OnCurrent(object sender, RoutedEventArgs args) => Execute(s => { if (Layers.SelectedItem is CadLayerRow row) { s.CurrentLayer = row.Name; s.Invalidate(); } });
     private void OnDelete(object sender, RoutedEventArgs args) => Execute(s => { if (Layers.SelectedItem is CadLayerRow row) s.DeleteLayer(row.Name); });
     private void OnApply(object sender, RoutedEventArgs args) => Execute(s =>
@@ -66,7 +82,9 @@ public sealed partial class CadLayerManager : UserControl
         var colorText = ColorValue.Text.Trim().TrimStart('#');
         if (colorText.Length != 6 || !uint.TryParse(colorText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var color)) throw new ArgumentException("Use a six-digit RGB color.");
         if (!GeometryMath.Number(WeightValue.Text, out var weight) || weight < 0) throw new ArgumentException("Weight must be a finite nonnegative number.");
-        s.UpdateLayer(row.Name, row.Layer with { Name = LayerName.Text.Trim(), Color = 0xFF000000u | color, LineWeight = weight, Linetype = (string?)LineType.SelectedItem ?? "CONTINUOUS", Visible = Visible.IsChecked == true, Locked = Locked.IsChecked == true });
+        var name = LayerName.Text.Trim();
+        s.UpdateLayer(row.Name, row.Layer with { Name = name, Color = 0xFF000000u | color, LineWeight = weight, Linetype = (string?)LineType.SelectedItem ?? "CONTINUOUS", Visible = Visible.IsChecked == true, Locked = Locked.IsChecked == true });
+        SelectLayer(name);
     });
 }
 
