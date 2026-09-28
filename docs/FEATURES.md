@@ -5,7 +5,7 @@ This matrix describes implemented behavior, not full AutoCAD parity. Opaque byte
 | Area | Implemented | Remaining boundaries |
 | --- | --- | --- |
 | DXF transport | ASCII, legacy R12 and R13+ binary groups, UTF-8/declared legacy code pages, original-byte preservation | Semantic conversion across every release and private extension |
-| Geometry | LINE/POINT/CIRCLE/ARC/ELLIPSE, supported LWPOLYLINE, OCS/affine placement, legacy 2D/3D polylines and polyface/polygon meshes | Wide-polyline faces, fitted legacy curves, all invisibility/edge/subdivision flags |
+| Geometry | LINE/POINT/CIRCLE/ARC/ELLIPSE, supported LWPOLYLINE, OCS/affine placement, legacy 2D/3D polylines and polyface/polygon meshes | Exact wide-polyline miter/linetype semantics, fitted legacy curves, all invisibility/edge/subdivision flags |
 | Splines | Rational control points, knots/weights, homogeneous evaluation, adaptive tessellation, control-point creation | Fit-only reconstruction, complete spline editing and NURBS surface kernel |
 | Mesh exchange | MESH/3DFACE/SOLID/TRACE, native indexed MESH output | ACIS/SAT/SAB 3DSOLID/BODY/REGION decoding and subdivision regeneration |
 | Hatches | Bulged polyline/edge-list loops, line/arc/ellipse/spline edges, island styles, bounded dash patterns, native HATCH output | Gradients, complete authoring/associativity; edge-list curves are sampled for editing; simple nonintersecting loop assumptions |
@@ -14,7 +14,7 @@ This matrix describes implemented behavior, not full AutoCAD parity. Opaque byte
 | Typography | Plain TEXT/MTEXT, width/oblique transforms, OCS/world-plane rendering; MTEXT radians/final orientation precedence | SHX, complete font/style substitution, every alignment/MTEXT grammar/column, shaping and annotative-text qualification |
 | Annotations | Aligned dimensions, anonymous dimension-block display, LEADER vertex paths | Associative styles/constraints, native authored DIMENSION/MLEADER/TABLE parity |
 | Structure | Entity visibility, model/paper-space separation, layout selector, supported ownership/block-record/layout dictionaries | Embedded paper-space model VIEWPORTs, sheet authoring, plotting/styles and exhaustive dependency repair |
-| Drafting | 64 commands; line-based trim/extend/fillet/chamfer/join/break, transforms, arrays, bulge explode, bounded crossing STRETCH and immutable grip edits, undo/redo | Complete multifunction/subobject grips, every STRETCH selection/deformation option, arbitrary UCS editing, every command option and AutoCAD API/plugin compatibility |
+| Drafting | 66 commands; line-based trim/extend/fillet/chamfer/join/break, transforms, arrays, bulge explode, bounded crossing STRETCH and immutable grip edits, undo/redo | Complete multifunction/subobject grips, every STRETCH selection/deformation option, arbitrary UCS editing, every command option and AutoCAD API/plugin compatibility |
 | Snaps | Indexed nested/OCS endpoints/midpoints/centers/quadrants, line intersections/perpendiculars, circle/arc tangents, nearest closure | Every curve intersection/tangent/perpendicular combination, extension tracking and fully screen-space 3D/UCS snap behavior |
 | Modeling | Primitives/extrusion/revolved surfaces, capped matching-profile polygon loft, parallel-transport sweep, bounded mesh Booleans | Analytic B-rep/ACIS topology, industrial solid fillets/chamfers/shelling, general NURBS surfaces, full self-intersection/manufacturing certification |
 | UI | Dense/minimizable ribbon, completion/Tab, expandable history, dynamic input, context actions, hideable/resizable properties and snap controls, Quick Select, overlap menu, working 2D grips, virtualized Layer Properties and Linetype managers with trim-safe rows and preserved model views | Pixel-exact AutoCAD UI, full docking/floating palettes, CUI customization, Sheet Set Manager, tool palettes, complete touch/accessibility parity |
@@ -45,8 +45,12 @@ Browser checkpoints use acknowledged IndexedDB transactions; the published appli
 
 ## Qualification
 
-258 headless tests include independent synthetic DXF fixtures, native persistence/provenance, Booleans, projection/picking, spatial-index equivalence, modeling, snapping, completion, whole-root windows, grip transactions, STRETCH, Quick Select, recovery failure fallback, style exchange, mixed-scale assignments, continuous spline/polyline patterns, large-coordinate guards and randomized clipped-stroke comparison. CI independently audits canonical ASCII/binary geometry and style exports.
+300 headless tests include independent synthetic DXF fixtures, native persistence/provenance, Booleans, projection/picking, spatial-index equivalence, modeling, snapping, completion, whole-root windows, grip transactions, STRETCH, Quick Select, recovery failure fallback, style exchange, mixed-scale assignments, continuous spline/polyline patterns, large-coordinate guards and randomized clipped-stroke comparison. CI independently audits canonical ASCII/binary geometry and style exports.
 
 Published-browser checks exercise actual mesh/dash pixels, upload/invalidation counters, grips, recovery, compiled layer cells, manager view preservation and UI layer edits inspected through real native checkpoints. Passing these does not imply every interaction has been qualified.
 
 **Not completed:** Autodesk AutoCAD open/AUDIT/save/reopen, exhaustive industrial DXF corpora, physical GPU/driver matrices, general large-document performance budgets, security/accessibility audits, signed/notarized installers or engineering certification. Software-backed CI is not evidence of those qualifications.
+
+## Native polyline width increment
+
+Constant and per-segment tapered widths are modeled, persisted and exchanged as native DXF. Straight/curved width fills are visible and selectable in 2D/3D, including OCS placements; PEDIT Width/Open/Close/Reverse and PLINEWID are available. Properties includes a bounded vertex editor. See [Wide polylines](WIDE-POLYLINES.md) for sampled-curve, bevel-join, linetype and loss-report boundaries. Scene bounds are identity-cached without changing the existing fit calculation.

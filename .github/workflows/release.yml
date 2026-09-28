@@ -43,6 +43,7 @@ jobs:
           dotnet run --project tests/CadSpace.Advanced.Tests -c Release
           dotnet run --project tests/CadSpace.Performance.Tests -c Release
           python tests/fixtures/audit.py
+          python tests/fixtures/audit_widths.py
           python tests/fixtures/audit_styles.py artifacts/styles-audit
   desktop:
     needs: verify

@@ -41,6 +41,7 @@ jobs:
           CADSPACE_EXCHANGE_OUTPUT: artifacts/dxf-audit
         run: |
           python tests/fixtures/audit.py
+          python tests/fixtures/audit_widths.py
           python tests/fixtures/audit_styles.py artifacts/styles-audit
       - name: Pack reusable libraries
         run: |
@@ -126,6 +127,7 @@ jobs:
           python tests/browser/recovery_storage.py
           python tests/browser/smoke.py
           python tests/browser/styles.py
+          python tests/browser/widths.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

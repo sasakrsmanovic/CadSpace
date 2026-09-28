@@ -42,6 +42,7 @@ public sealed class CadDocument
         if (entity is ArcEntity a && (!double.IsFinite(a.Radius) || a.Radius <= 0 || !double.IsFinite(a.StartAngle) || !double.IsFinite(a.EndAngle))) throw new ArgumentException("Invalid arc.");
         if (entity is EllipseEntity ell && (ell.MajorAxis.Length <= 1e-9 || !double.IsFinite(ell.Ratio) || ell.Ratio <= 0 || !double.IsFinite(ell.StartParameter) || !double.IsFinite(ell.EndParameter))) throw new ArgumentException("Invalid ellipse.");
         if (entity is TextEntity t && (!double.IsFinite(t.Height) || t.Height <= 0 || !double.IsFinite(t.Rotation))) throw new ArgumentException("Invalid text geometry.");
+        if (entity is PolylineEntity wide) PolylineWidths.Validate(wide);
         if (entity is PolylineEntity p && (p.Vertices.Length < 2 || p.Vertices.Any(v => !double.IsFinite(v.Bulge)))) throw new ArgumentException("Invalid polyline.");
         if (entity is MeshEntity m && (m.Triangles.Length % 3 != 0 || m.Triangles.Length > 3000000 || m.Triangles.Any(i => i < 0 || i >= m.Vertices.Length))) throw new ArgumentException("Invalid mesh indices.");
         if (entity is HatchEntity h && (h.Boundary.Length < 3 || !double.IsFinite(h.Spacing) || h.Spacing <= 0 || !double.IsFinite(h.Angle))) throw new ArgumentException("Invalid hatch.");

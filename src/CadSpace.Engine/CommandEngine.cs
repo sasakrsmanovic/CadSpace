@@ -37,6 +37,8 @@ public sealed class CommandEngine(CadSession session)
         new("SWEEP", "SW", "Parallel-transport mesh sweep of a profile along an open polyline", "Model"),
         new("LAYER", "LA", "Layer Properties Manager", "Manage"), new("LINETYPE", "LT", "Linetype Manager", "Manage"),
         new("LTSCALE", "LTSCALE", "Global drawing linetype scale", "Manage"), new("CELTSCALE", "CELTSCALE", "Linetype scale for new objects", "Manage"), new("CELTYPE", "CELTYPE", "Current linetype; built-in patterns load by name", "Manage"),
+        new("PEDIT", "PE", "Selected polylines: Width, Open, Close or Reverse", "Modify"),
+        new("PLINEWID", "PLINEWID", "Default width of new polylines and rectangles", "Draw"),
         new("LINE", "L", "Connected line segments", "Draw"), new("PLINE", "PL", "Polyline; Enter finishes, C closes", "Draw"), new("RECTANG", "REC", "Rectangle from two corners", "Draw"),
         new("CIRCLE", "C", "Center and radius", "Draw"), new("ARC", "A", "Arc through three points", "Draw"), new("POINT", "PO", "Model-space point", "Draw"), new("ELLIPSE", "EL", "Center, major-axis point, minor radius", "Draw"),
         new("TEXT", "T", "Single-line text", "Annotate"), new("DIMALIGNED", "DAL", "Aligned dimension", "Annotate"), new("HATCH", "H", "Hatch selected closed polyline", "Annotate"),
@@ -92,7 +94,7 @@ public sealed class CommandEngine(CadSession session)
                     case "HATCH":
                         var hatches = Session.EditableSelection().Select(e => e is PolylineEntity { Closed: true } p ? new HatchEntity(EntityGeometry.PolylinePoints(p)) { Layer = p.Layer, Layout = p.Layout } : throw new ArgumentException("Hatch requires closed polylines.")).ToArray();
                         Session.Document.Add("Hatch", hatches); Cancel(); return;
-                    case "MOVE": case "COPY": case "ROTATE": case "SCALE": case "MIRROR": case "OFFSET": case "ARRAY": case "EXTRUDE": case "REVOLVE": case "BLOCK": case "TRIM": case "EXTEND": case "FILLET": case "CHAMFER": case "BREAK": case "ROTATE3D": case "MIRROR3D": case "ALIGN3D": Session.EditableSelection(); break;
+                    case "MOVE": case "COPY": case "ROTATE": case "SCALE": case "MIRROR": case "OFFSET": case "ARRAY": case "EXTRUDE": case "REVOLVE": case "BLOCK": case "TRIM": case "EXTEND": case "FILLET": case "CHAMFER": case "BREAK": case "ROTATE3D": case "MIRROR3D": case "ALIGN3D": case "PEDIT": Session.EditableSelection(); break;
                 }
                 UpdatePrompt(); return;
             }
@@ -100,13 +102,13 @@ public sealed class CommandEngine(CadSession session)
             {
                 if (_active == "3DPOLY" && _points.Count >= 2) Session.Add("3D polyline", new Polyline3DEntity(_points.ToImmutableArray()));
                 if (_active == "SPLINE" && _points.Count >= 2) Session.Add("Spline", AdvancedEditing.ControlSpline(_points));
-                if (_active == "PLINE" && _points.Count >= 2) Session.Add("Polyline", PolylineEntity.FromPoints(_points));
+                if (_active == "PLINE" && _points.Count >= 2) Session.Add("Polyline", PolylineEntity.FromPoints(_points) with { ConstantWidth = Session.CurrentPolylineWidth });
                 Cancel(); return;
             }
             if (_active is "PLINE" or "3DPOLY" && input.Equals("C", StringComparison.OrdinalIgnoreCase))
             {
                 if (_points.Count < 3) throw new ArgumentException("At least three vertices are required to close the polyline.");
-                Session.Add("Polyline", _active == "3DPOLY" ? new Polyline3DEntity(_points.ToImmutableArray(), true) : PolylineEntity.FromPoints(_points, true)); Cancel(); return;
+                Session.Add("Polyline", _active == "3DPOLY" ? new Polyline3DEntity(_points.ToImmutableArray(), true) : PolylineEntity.FromPoints(_points, true) with { ConstantWidth = Session.CurrentPolylineWidth }); Cancel(); return;
             }
             if (_active is "BLOCK" or "INSERT" && _text.Length == 0) { _text = input; if (_active == "INSERT" && !Session.Document.Drawing.Blocks.ContainsKey(_text)) throw new ArgumentException("Block not found."); UpdatePrompt(); return; }
             if (_active == "QSELECT")
@@ -136,6 +138,18 @@ public sealed class CommandEngine(CadSession session)
                 if (new Vec3(numbers[3], numbers[4], numbers[5]).Length < 1e-12) throw new ArgumentException("A clipping normal cannot be zero.");
                 ViewRequested?.Invoke("CLIP:" + input); Cancel(); return;
             }
+            if (_active == "PEDIT" && _text.Length == 0)
+            {
+                switch (input.ToUpperInvariant())
+                {
+                    case "W": case "WIDTH": _text = "WIDTH"; UpdatePrompt(); return;
+                    case "O": case "OPEN": Session.SetClosed(false); break;
+                    case "C": case "CLOSE": Session.SetClosed(true); break;
+                    case "R": case "REVERSE": Session.Reverse(); break;
+                    default: throw new ArgumentException("Use Width, Open, Close or Reverse.");
+                }
+                Cancel(); return;
+            }
             if (_active == "CELTYPE") { Session.SetCurrentLinetype(input); Cancel(); return; }
             if (_active == "ARRAY") { Array(input); Cancel(); return; }
             if (GeometryMath.TryParsePoint(input, ReferencePoint ?? default, out var p)) { Point(p); return; }
@@ -144,7 +158,7 @@ public sealed class CommandEngine(CadSession session)
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(ex.Message); Cancel(); }
     }
-    private bool RequiresNumber => _active is "LTSCALE" or "CELTSCALE" or "CELTYPE" or "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
+    private bool RequiresNumber => _active is "PEDIT" or "PLINEWID" or "LTSCALE" or "CELTSCALE" or "CELTYPE" or "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
     public void Point(Vec3 point)
     {
         if (!IsActive || !point.IsFinite) return;
@@ -166,7 +180,7 @@ public sealed class CommandEngine(CadSession session)
                 case "RECTANG" when _points.Count == 2:
                     var a = _points[0]; var b = point;
                     if (Math.Abs(a.X - b.X) < 1e-9 || Math.Abs(a.Y - b.Y) < 1e-9) throw new ArgumentException("Rectangle width and height must be nonzero.");
-                    Session.Add("Rectangle", PolylineEntity.FromPoints(new Vec3[] { a, new(b.X, a.Y, a.Z), new(b.X, b.Y, a.Z), new(a.X, b.Y, a.Z) }, true)); Cancel(); return;
+                    Session.Add("Rectangle", PolylineEntity.FromPoints(new Vec3[] { a, new(b.X, a.Y, a.Z), new(b.X, b.Y, a.Z), new(a.X, b.Y, a.Z) }, true) with { ConstantWidth = Session.CurrentPolylineWidth }); Cancel(); return;
                 case "CIRCLE" when _points.Count == 2: Session.Add("Circle", new CircleEntity(_points[0], _points[0].DistanceTo(point))); Cancel(); return;
                 case "ARC" when _points.Count == 3:
                     var circle = GeometryMath.CircleThrough(_points[0], _points[1], _points[2]); var start = GeometryMath.Angle(_points[0] - circle.Center); var end = GeometryMath.Angle(point - circle.Center); var middle = GeometryMath.Angle(_points[1] - circle.Center);
@@ -190,6 +204,10 @@ public sealed class CommandEngine(CadSession session)
     {
         switch (_active)
         {
+            case "PEDIT" when _text == "WIDTH": Session.SetWidth(value); break;
+            case "PLINEWID":
+                if (value < 0 || value > 1e12) throw new ArgumentException("Polyline width must be between 0 and 1e12.");
+                Session.CurrentPolylineWidth = value; Session.Invalidate(); break;
             case "LTSCALE":
                 if (value <= 0 || value > 1e9) throw new ArgumentException("Global linetype scale must be positive and no larger than 1e9.");
                 Session.Document.Edit("Global linetype scale", d => d with { LinetypeScale = value }); break;
@@ -237,6 +255,8 @@ public sealed class CommandEngine(CadSession session)
     {
         Prompt = _active switch
         {
+            "PEDIT" => _text == "WIDTH" ? "Specify uniform polyline width (0 for a centerline)" : "Enter Width / Open / Close / Reverse",
+            "PLINEWID" => "Specify default polyline width (drawing units)",
             "LTSCALE" => "Specify global linetype scale",
             "CELTSCALE" => "Specify linetype scale for new objects",
             "CELTYPE" => "Enter BYLAYER / BYBLOCK or a loaded/built-in linetype name",
@@ -281,8 +301,10 @@ public sealed class CommandEngine(CadSession session)
             "STRETCH" when _points.Count == 3 => Session.PreviewStretch(_points[0], _points[1], cursor - _points[2]),
             "STRETCH" => [],
             "LINE" => [new LineEntity(_points[^1], cursor)],
-            "PLINE" or "3DPOLY" or "SPLINE" => [PolylineEntity.FromPoints(_points.Append(cursor))],
-            "RECTANG" or "BOX" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true)],
+            "PLINE" => [PolylineEntity.FromPoints(_points.Append(cursor)) with { ConstantWidth = Session.CurrentPolylineWidth }],
+            "3DPOLY" or "SPLINE" => [PolylineEntity.FromPoints(_points.Append(cursor))],
+            "RECTANG" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true) with { ConstantWidth = Session.CurrentPolylineWidth }],
+            "BOX" when _points.Count == 1 => [PolylineEntity.FromPoints(new Vec3[] { a, new(cursor.X, a.Y, a.Z), cursor, new(a.X, cursor.Y, a.Z) }, true)],
             "CIRCLE" or "CYLINDER" or "CONE" or "SPHERE" when _points.Count == 1 => [new CircleEntity(a, Math.Max(1e-8, a.DistanceTo(cursor)))],
             "MOVE" or "COPY" => Session.SelectedEntities().Select(e => EntityGeometry.Transform(e, Transform3.Translation(cursor - a))).ToArray(),
             "DIMALIGNED" when _points.Count == 2 => [new DimensionEntity(a, _points[1], cursor)],
