@@ -10,7 +10,7 @@ public sealed class CadChromeGlyph : SKCanvasElement
 {
     public string Symbol { get; init; } = "+";
     public uint Color { get; init; } = CadTheme.TextColor;
-    public static bool Supports(string symbol) => symbol is "▾" or "⌃" or "‹" or "›" or "□" or "●" or "○" or "×" or "+" or "☰";
+    public static bool Supports(string symbol) => symbol is "▾" or "⌃" or "‹" or "›" or "□" or "●" or "○" or "×" or "+" or "☰" or "↗" or "↑";
     protected override void RenderOverride(SKCanvas canvas, Size area)
     {
         canvas.Save(); canvas.Scale((float)(area.Width / 16), (float)(area.Height / 16));
@@ -19,6 +19,8 @@ public sealed class CadChromeGlyph : SKCanvasElement
         void Line(float x, float y, float a, float b) => canvas.DrawLine(x, y, a, b, paint);
         switch (Symbol)
         {
+            case "↗": Line(3, 13, 13, 3); Line(5, 3, 13, 3); Line(13, 3, 13, 11); break;
+            case "↑": Line(8, 13, 8, 3); Line(3, 8, 8, 3); Line(8, 3, 13, 8); break;
             case "▾": Line(3, 5, 8, 10); Line(8, 10, 13, 5); break;
             case "⌃": Line(3, 10, 8, 5); Line(8, 5, 13, 10); break;
             case "‹": Line(10, 3, 5, 8); Line(5, 8, 10, 13); break;

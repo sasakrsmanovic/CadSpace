@@ -20,8 +20,22 @@ public static class CadUi
     {
         var button = CadTheme.Button(text, action); button.FontSize = 11; button.Height = 26; button.MinHeight = 24;
         button.Padding = new Thickness(7, 2, 7, 2); button.CornerRadius = new CornerRadius(0);
-        if (CadChromeGlyph.Supports(text)) SetGlyph(button, text);
         return Identify(button, id, text);
+    }
+    /// <summary>Compose chrome symbols as vectors, including labels with a trailing arrow.</summary>
+    public static void SetButtonLabel(Button button, string text)
+    {
+        if (CadChromeGlyph.Supports(text)) { SetGlyph(button, text); return; }
+        if (text.Length > 2 && text[^2] == ' ' && CadChromeGlyph.Supports(text[^1].ToString()))
+        {
+            // Leave FontSize unset so the caption follows its owning button's size.
+            var label = new TextBlock { Text = text[..^2], FontFamily = CadTheme.UiFont, VerticalAlignment = VerticalAlignment.Center };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, IsHitTestVisible = false };
+            row.Children.Add(label);
+            row.Children.Add(new CadChromeGlyph { Symbol = text[^1].ToString(), Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false });
+            button.Content = row;
+        }
+        else button.Content = text;
     }
     public static void SetGlyph(Button button, string symbol, uint color = CadTheme.TextColor)
     {
