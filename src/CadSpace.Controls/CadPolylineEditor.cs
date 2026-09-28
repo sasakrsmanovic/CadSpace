@@ -38,8 +38,8 @@ public sealed class CadPolylineEditor : UserControl
     {
         if (!SelectIndex()) return;
         var vertex = _expected!.Vertices[_selected];
-        _start.Text = vertex.StartWidth.ToString(CultureInfo.InvariantCulture);
-        _end.Text = vertex.EndWidth.ToString(CultureInfo.InvariantCulture);
+        _start.Text = (_expected.ConstantWidth > 0 ? _expected.ConstantWidth : vertex.StartWidth).ToString(CultureInfo.InvariantCulture);
+        _end.Text = (_expected.ConstantWidth > 0 ? _expected.ConstantWidth : vertex.EndWidth).ToString(CultureInfo.InvariantCulture);
         _bulge.Text = vertex.Bulge.ToString(CultureInfo.InvariantCulture);
         _status.Text = !_expected.Closed && _selected == _expected.Vertices.Length - 1 ? "Last open vertex: outgoing properties take effect only after closing or extending." : "Widths apply to the segment starting at this vertex. Applying clears global width.";
     }
