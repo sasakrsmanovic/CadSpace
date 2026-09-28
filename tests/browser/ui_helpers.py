@@ -14,7 +14,7 @@ async def command(page, *values):
 
 async def bounds(page, events):
     begin = len(events)
-    await command(page, 'UISTATS')
+    await page.keyboard.press('Control+Shift+F12')
     for _ in range(40):
         for e in reversed(events[begin:]):
             found = re.search(r'CADSPACE_UI_BOUNDS:(\{.*\})', e.get('text', ''))

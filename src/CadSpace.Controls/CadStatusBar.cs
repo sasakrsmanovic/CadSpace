@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using CadSpace.Engine;
 using CadSpace.Geometry;
 using Microsoft.UI.Xaml;
@@ -14,6 +15,16 @@ public sealed class CadStatusBar : UserControl
     private CadSession? _session; private bool _building;
     public event Action<string>? WorkspaceRequested;
     public event Action? OptionsRequested;
+    public event Action? CustomizationChanged;
+    private ImmutableArray<string> _hidden = [];
+    public ImmutableArray<string> HiddenItems => _hidden;
+    public void SetHiddenItems(IEnumerable<string> items)
+    {
+        var value = items.ToImmutableArray(); WorkspaceLayout.Validate(new() { HiddenStatusItems = value });
+        _hidden = value;
+        foreach (var (id, button) in _toggles) button.Visibility = _hidden.Contains(id) ? Visibility.Collapsed : Visibility.Visible;
+        _snapOptions.Visibility = _hidden.Contains("OSNAP") ? Visibility.Collapsed : Visibility.Visible;
+    }
     public CadStatusBar()
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 1, Background = CadTheme.Brush(0xFF202A36) };
@@ -24,10 +35,23 @@ public sealed class CadStatusBar : UserControl
         _workspace.SelectionChanged += (_, _) => { if (!_building && _workspace.SelectedItem is string name) WorkspaceRequested?.Invoke(name); };
         CadUi.Identify(_workspace, "status.workspace", "Workspace"); row.Children.Add(_workspace);
         row.Children.Add(CadUi.IconButton("OPTIONS", "Workspace options", () => OptionsRequested?.Invoke(), "status.options", 25));
+        var customize = CadUi.TextButton("☰", () => { }, "status.customize"); customize.Width = 25; customize.Padding = new Thickness(0);
+        ToolTipService.SetToolTip(customize, "Customize status bar (hiding a control does not disable its mode)");
+        var customization = new MenuFlyout();
+        customization.Opening += (_, _) => {
+            customization.Items.Clear();
+            foreach (var id in WorkspaceLayout.StatusItems)
+            {
+                var item = CadUi.Identify(new ToggleMenuFlyoutItem { Text = id, IsChecked = !_hidden.Contains(id) }, "status.show." + id, "Show " + id);
+                item.Click += (_, _) => { SetHiddenItems(item.IsChecked ? _hidden.Remove(id) : _hidden.Add(id)); CustomizationChanged?.Invoke(); };
+                customization.Items.Add(item);
+            }
+        };
+        customize.Flyout = customization; row.Children.Add(customize);
         Content = row; SizeChanged += (_, _) => _coordinates.Visibility = XamlRoot?.Size.Width < 1150 ? Visibility.Collapsed : Visibility.Visible;
     }
     public void Bind(CadSession session)
-    { if (_session != null) _session.Changed -= Refresh; _session = session; session.Changed += Refresh; Refresh(); }
+    { if (_session != null) _session.Changed -= Refresh; _session = session; _builtModes = null; session.Changed += Refresh; Refresh(); }
     public void SetWorkspace(string workspace) { _building = true; try { _workspace.SelectedItem = workspace; } finally { _building = false; } }
     public void SetCoordinates(Vec3 point)
     { var text = FormattableString.Invariant($"{point.X:0.000}, {point.Y:0.000}, {point.Z:0.000}"); if (_coordinates.Text != text) _coordinates.Text = text; }
@@ -47,7 +71,7 @@ public sealed class CadStatusBar : UserControl
         var menu = new MenuFlyout();
         foreach (var mode in new[] { ObjectSnapModes.Endpoint, ObjectSnapModes.Midpoint, ObjectSnapModes.Center, ObjectSnapModes.Quadrant, ObjectSnapModes.Intersection, ObjectSnapModes.Perpendicular, ObjectSnapModes.Tangent, ObjectSnapModes.Nearest })
         {
-            var item = new ToggleMenuFlyoutItem { Text = mode.ToString(), IsChecked = (s.SnapModes & mode) != 0 };
+            var item = CadUi.Identify(new ToggleMenuFlyoutItem { Text = mode.ToString(), IsChecked = (s.SnapModes & mode) != 0 }, "snap." + mode, mode.ToString());
             item.Click += (_, _) => { if (item.IsChecked) s.SnapModes |= mode; else s.SnapModes &= ~mode; s.Invalidate(); }; menu.Items.Add(item);
         }
         _snapOptions.Flyout = menu;

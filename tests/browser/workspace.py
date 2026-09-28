@@ -46,7 +46,7 @@ async def main():
             await page.mouse.click(x+80,y+22); await command(page,'0,0','80,60','30')
             await bounds(page,events); assert any('model=True' in e.get('text','') for e in events[-20:])
             await shot('55-tool-palette-modeling.png')
-            await click(page,events,'viewport.views'); await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter')
+            await click(page,events,'viewport.views'); await click(page,events,'view.Front')
             await bounds(page,events)
             state=next(e['text'] for e in reversed(events) if 'CADSPACE_UI_STATE:' in e.get('text',''))
             assert 'yaw=-90;' in state and 'pitch=0;' in state,state

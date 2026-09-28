@@ -10,6 +10,36 @@ internal static class WorkspaceRegression
     {
         void Check(bool value) { if (!value) throw new Exception("Workspace assertion failed."); }
         void Reject(Action action) { try { action(); } catch (Exception e) when (e is ArgumentException or FormatException or InvalidOperationException or NotSupportedException) { return; } throw new Exception("Expected rejection."); }
+        test("display preferences roundtrip independently of drawings", () => {
+            var a = WorkspaceLayout.Default with { MenuBarVisible = true, ViewCubeVisible = false, NavigationBarVisible = false, CommandHeight = 124, HiddenStatusItems = ["SNAP", "SC"] };
+            var session = new CadSession(); var before = session.Document.Drawing; var b = WorkspaceLayout.Decode(a.Encode());
+            Check(a.Encode() == b.Encode() && before == session.Document.Drawing && !session.Document.CanUndo);
+        });
+        test("legacy workspace preferences gain conservative display defaults", () => {
+            var a = WorkspaceLayout.Decode("{\"version\":1,\"workspace\":\"Drafting & Annotation\",\"ribbonMinimized\":false,\"cleanScreen\":false,\"palettes\":[]}");
+            Check(a.CommandHeight == 74 && !a.MenuBarVisible && a.ViewCubeVisible && a.NavigationBarVisible && a.HiddenStatusItems.IsEmpty);
+        });
+        test("console preferences reject nonfinite or unbounded heights", () => {
+            foreach (var height in new[] { double.NaN, double.PositiveInfinity, 73, 351 }) Reject(() => (WorkspaceLayout.Default with { CommandHeight = height }).Encode());
+        });
+        test("status customization rejects unknown or duplicate items", () => {
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = ["GRID", "GRID"] }).Encode());
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = ["UNKNOWN"] }).Encode());
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = default }).Encode());
+        });
+        test("all status controls can be hidden without changing snap or grid state", () => {
+            var session = new CadSession(); var modes = session.SnapModes; var layout = WorkspaceLayout.Default with { HiddenStatusItems = WorkspaceLayout.StatusItems.ToImmutableArray() };
+            Check(WorkspaceLayout.Decode(layout.Encode()).HiddenStatusItems.Length == 7 && session.GridVisible && session.SnapModes == modes);
+        });
+        test("MENUBAR dispatches on and off without an undo transaction", () => {
+            var session = new CadSession(); var engine = new CommandEngine(session); var views = new List<string>(); engine.ViewRequested += views.Add;
+            foreach (var value in new[] { "MENUBAR", "1", "MENUBAR", "0" }) engine.Submit(value);
+            Check(views.SequenceEqual(new[] { "MENUBAR:1", "MENUBAR:0" }) && !session.Document.CanUndo);
+        });
+        test("invalid MENUBAR values do not mutate UI or drawing state", () => {
+            var engine = new CommandEngine(new()); var changed = false; engine.ViewRequested += _ => changed = true;
+            foreach (var value in new[] { "MENUBAR", "-1", "MENUBAR", "2" }) engine.Submit(value); Check(!changed && !engine.IsActive);
+        });
         test("workspace preferences preserve palette placement and state", () => { var a = new WorkspaceLayout { Workspace = "3D Modeling", RibbonMinimized = true, CleanScreen = true, Palettes = [new("properties", PaletteDock.Floating, true, false, 300, 500, 70, 90), new("tools", PaletteDock.Left, false, true)] }; var b = WorkspaceLayout.Decode(a.Encode()); Check(a.Encode() == b.Encode()); });
         test("workspace rejects duplicated palette identities", () => Reject(() => (WorkspaceLayout.Default with { Palettes = [new("p"), new("p")] }).Encode()));
         test("workspace rejects nonfinite placement", () => Reject(() => (WorkspaceLayout.Default with { Palettes = [new("p", X: double.NaN)] }).Encode()));

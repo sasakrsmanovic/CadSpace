@@ -10,6 +10,7 @@ public sealed class CadDocumentTabs : UserControl
     private readonly ScrollViewer _scroll;
     private readonly Button _list, _previous, _next;
     private (object Key, string Name, bool Dirty)[] _documents = [];
+    private object? _active;
     public IReadOnlyList<(object Key, string Name, bool Dirty)> Documents => _documents;
     public event Action<object>? ActivateRequested;
     public event Action<object>? CloseRequested;
@@ -32,7 +33,9 @@ public sealed class CadDocumentTabs : UserControl
     private void Overflow() => _previous.Visibility = _next.Visibility = _scroll.ExtentWidth > _scroll.ViewportWidth + 2 ? Visibility.Visible : Visibility.Collapsed;
     public void SetDocuments(IEnumerable<(object Key, string Name, bool Dirty)> documents, object active)
     {
-        _documents = documents.ToArray(); _tabs.Children.Clear(); var menu = new MenuFlyout();
+        var next = documents.ToArray();
+        if (Equals(_active, active) && _documents.SequenceEqual(next)) return;
+        _active = active; _documents = next; _tabs.Children.Clear(); var menu = new MenuFlyout();
         for (var i = 0; i < _documents.Length; i++)
         {
             var d = _documents[i]; var index = i; var row = new StackPanel { Orientation = Orientation.Horizontal };
@@ -44,7 +47,7 @@ public sealed class CadDocumentTabs : UserControl
             foreach (var (name, move) in new[] { ("Move tab left", -1), ("Move tab right", 1) })
             { var item = new MenuFlyoutItem { Text = name, IsEnabled = index + move >= 0 && index + move < _documents.Length }; item.Click += (_, _) => MoveRequested?.Invoke(d.Key, index + move); context.Items.Add(item); }
             var closeItem = new MenuFlyoutItem { Text = "Close drawing" }; closeItem.Click += (_, _) => CloseRequested?.Invoke(d.Key); context.Items.Add(closeItem); button.ContextFlyout = context;
-            var choose = new MenuFlyoutItem { Text = d.Name + (d.Dirty ? " *" : "") }; choose.Click += (_, _) => ActivateRequested?.Invoke(d.Key); menu.Items.Add(choose);
+            var choose = CadUi.Identify(new MenuFlyoutItem { Text = d.Name + (d.Dirty ? " *" : "") }, "documents.choose." + i, d.Name); choose.Click += (_, _) => ActivateRequested?.Invoke(d.Key); menu.Items.Add(choose);
         }
         _list.Flyout = menu; DocumentsChanged?.Invoke();
     }

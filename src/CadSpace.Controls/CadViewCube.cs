@@ -23,14 +23,14 @@ public sealed class CadViewCube : Grid
         var bottom = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         bottom.Children.Add(CadUi.IconButton("HOME", "Home view / fit", () => NavigationRequested?.Invoke("home"), "viewport.home", 23));
         var views = CadUi.TextButton("WCS ▾", () => { }, "viewport.standardViews"); var menu = new MenuFlyout();
-        foreach (var name in ViewCubeGeometry.Names) { var item = new MenuFlyoutItem { Text = name }; item.Click += (_, _) => OrientationRequested?.Invoke(ViewCubeGeometry.Named(name)); menu.Items.Add(item); }
+        foreach (var name in ViewCubeGeometry.Names) { var item = CadUi.Identify(new MenuFlyoutItem { Text = name }, "cube.view." + name, name); item.Click += (_, _) => OrientationRequested?.Invoke(ViewCubeGeometry.Named(name)); menu.Items.Add(item); }
         views.Flyout = menu; bottom.Children.Add(views); Grid.SetRow(bottom, 1); Children.Add(bottom);
         Point start = default, last = default; bool pressed = false, moved = false;
         _surface.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(_surface).Properties.IsLeftButtonPressed) return; start = last = e.GetCurrentPoint(_surface).Position; pressed = true; moved = false; _surface.CapturePointer(e.Pointer); e.Handled = true; };
         _surface.PointerMoved += (_, e) => { if (!pressed) return; var p = e.GetCurrentPoint(_surface).Position; if (Math.Abs(p.X - start.X) + Math.Abs(p.Y - start.Y) > 5 || moved) { moved = true; OrbitRequested?.Invoke(p.X - last.X, p.Y - last.Y); } last = p; e.Handled = true; };
         _surface.PointerReleased += (_, e) => {
             if (!pressed) return; var p = e.GetCurrentPoint(_surface).Position; pressed = false; _surface.ReleasePointerCapture(e.Pointer);
-            if (!moved && ViewCubeGeometry.Pick(ViewCubeGeometry.Faces(_yaw, _pitch), p.X, p.Y) is { } orientation) OrientationRequested?.Invoke(orientation); e.Handled = true;
+            if (!moved && ViewCubeGeometry.Pick(ViewCubeGeometry.Faces(_yaw, _pitch), p.X * 128 / Math.Max(1, _surface.ActualWidth), p.Y * 128 / Math.Max(1, _surface.ActualHeight)) is { } orientation) OrientationRequested?.Invoke(orientation); e.Handled = true;
         };
         _surface.PointerCaptureLost += (_, _) => pressed = false;
     }
@@ -86,14 +86,14 @@ public sealed class CadViewportControls : StackPanel
         Orientation = Orientation.Horizontal; Spacing = 1;
         var more = CadUi.TextButton("[ + ]", () => { }, "viewport.menu"); var options = new MenuFlyout();
         foreach (var (text, action) in new[] { ("Zoom extents", "ZOOM"), ("Perspective / orthographic", "projection"), ("Section clipping (display only)", "clip") })
-        { var item = new MenuFlyoutItem { Text = text }; item.Click += (_, _) => NavigationRequested?.Invoke(action); options.Items.Add(item); }
+        { var item = CadUi.Identify(new MenuFlyoutItem { Text = text }, "viewoption." + action, text); item.Click += (_, _) => NavigationRequested?.Invoke(action); options.Items.Add(item); }
         more.Flyout = options; Children.Add(more);
         _view = CadUi.TextButton("[ Top ]", () => { }, "viewport.views"); var views = new MenuFlyout();
-        foreach (var name in ViewCubeGeometry.Names) { var item = new MenuFlyoutItem { Text = name }; item.Click += (_, _) => NavigationRequested?.Invoke("view:" + name); views.Items.Add(item); }
+        foreach (var name in ViewCubeGeometry.Names) { var item = CadUi.Identify(new MenuFlyoutItem { Text = name }, "view." + name, name); item.Click += (_, _) => NavigationRequested?.Invoke("view:" + name); views.Items.Add(item); }
         _view.Flyout = views; Children.Add(_view);
         _style = CadUi.TextButton("[ 2D Wireframe ]", () => { }, "viewport.styles"); var styles = new MenuFlyout();
         foreach (var name in new[] { "2D Wireframe", "Wireframe", "HiddenLine", "Shaded", "ShadedEdges" })
-        { var item = new MenuFlyoutItem { Text = name }; item.Click += (_, _) => NavigationRequested?.Invoke("style:" + name); styles.Items.Add(item); }
+        { var item = CadUi.Identify(new MenuFlyoutItem { Text = name }, "viewstyle." + name, name); item.Click += (_, _) => NavigationRequested?.Invoke("style:" + name); styles.Items.Add(item); }
         _style.Flyout = styles; Children.Add(_style);
         foreach (var b in Children.OfType<Button>()) { b.Background = CadTheme.Brush(0x801D242C); b.Padding = new Thickness(3, 1, 3, 1); }
     }

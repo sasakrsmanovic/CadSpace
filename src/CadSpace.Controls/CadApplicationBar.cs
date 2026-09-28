@@ -67,15 +67,18 @@ public sealed class CadApplicationMenu : Button
             var b = CadUi.TextButton(label, () => { _flyout.Hide(); CommandRequested?.Invoke(command); }, "application." + command);
             b.Height = 36; b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Left; actions.Children.Add(b);
         }
-        grid.Children.Add(actions); _documents.Margin = new Thickness(16, 0, 0, 0); Grid.SetColumn(_documents, 1); grid.Children.Add(_documents);
+        grid.Children.Add(actions); _documents.Margin = new Thickness(16, 0, 0, 0);
+        var documentsScroll = new ScrollViewer { Content = _documents, MaxHeight = 405, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        Grid.SetColumn(documentsScroll, 1); grid.Children.Add(documentsScroll);
         _flyout.Content = grid; Flyout = _flyout;
     }
     public void SetDocuments(IEnumerable<(object Key, string Name, bool Dirty)> documents)
     {
         _documents.Children.Clear(); _documents.Children.Add(CadTheme.Text("OPEN DRAWINGS", 11, CadTheme.Muted));
+        var index = 0;
         foreach (var d in documents.Take(30))
         {
-            var b = CadUi.TextButton(d.Name + (d.Dirty ? " *" : ""), () => { _flyout.Hide(); ActivateRequested?.Invoke(d.Key); }, "application.document");
+            var b = CadUi.TextButton(d.Name + (d.Dirty ? " *" : ""), () => { _flyout.Hide(); ActivateRequested?.Invoke(d.Key); }, "application.document." + index++);
             b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Left; ToolTipService.SetToolTip(b, d.Name); _documents.Children.Add(b);
         }
     }

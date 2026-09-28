@@ -18,6 +18,7 @@ public sealed class CadCommandLine : UserControl
     private CommandEngine? _engine;
     private int _historyIndex;
     private bool _expanded;
+    public double PanelHeight { get; private set; } = 74;
     public event Action<bool>? HistoryExpanded;
     public event Action<double>? HeightChanged;
     public event Action? CancelRequested;
@@ -41,11 +42,12 @@ public sealed class CadCommandLine : UserControl
     public void ToggleHistory()
     {
         _expanded=!_expanded;_root.RowDefinitions[0].Height=new GridLength(_expanded?170:42);_history.MaxLines=_expanded?0:2;
-        RefreshHistory();HistoryExpanded?.Invoke(_expanded);HeightChanged?.Invoke(_expanded?202:74);Complete();
+        PanelHeight = _expanded ? 202 : 74; RefreshHistory();HistoryExpanded?.Invoke(_expanded);HeightChanged?.Invoke(PanelHeight);Complete();
     }
     public void ResizeTo(double totalHeight)
     {
-        totalHeight = Math.Clamp(totalHeight, 74, 350); _expanded = totalHeight > 80;
+        if (!double.IsFinite(totalHeight)) throw new ArgumentException("Command height must be finite.");
+        totalHeight = Math.Clamp(totalHeight, 74, 350); PanelHeight = totalHeight; _expanded = totalHeight > 80;
         _root.RowDefinitions[0].Height = new GridLength(totalHeight - 32); _history.MaxLines = _expanded ? 0 : 2;
         RefreshHistory(); Complete(); HeightChanged?.Invoke(totalHeight);
     }

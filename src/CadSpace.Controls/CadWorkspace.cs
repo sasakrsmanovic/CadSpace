@@ -18,6 +18,7 @@ public sealed partial class CadWorkspace : UserControl
 {
     public CadApplicationBar ApplicationBar { get; } = new();
     public CadRibbon Ribbon { get; } = new();
+    public CadMenuBar MenuBar { get; } = new() { Visibility = Visibility.Collapsed };
     public CadViewport Viewport { get; } = new();
     public CadCommandLine CommandLine { get; } = new();
     public CadPalette Palette { get; } = new();
@@ -31,24 +32,29 @@ public sealed partial class CadWorkspace : UserControl
     private CommandEngine? _commands; private CadSession? _session;
     private readonly Grid _root = CadTheme.Grid(34, 120, 30, -1, 78, 27);
     private string _workspaceName = WorkspaceLayout.Presets[0];
-    private bool _cleanScreen, _restoring, _optionsDialog;
+    private bool _cleanScreen, _menuBarVisible, _restoring, _optionsDialog;
+    private Action? _cancelConsoleResize;
     private Drawing? _selectionDrawing; private long _selectionRevision = -1;
     public CadWorkspace()
     {
+        CadUi.Identify(Viewport, "viewport.surface", "CAD drawing viewport");
         RequestedTheme = ElementTheme.Dark; _root.Background = CadTheme.Brush(CadTheme.Background);
         DockHost = new(Viewport); DockHost.AddPane("properties", "Properties", Palette, new("properties")); DockHost.AddPane("tools", "Tool Palettes", ToolPalette, new("tools", PaletteDock.Left, false));
-        CadTheme.At(_root, ApplicationBar, 0); CadTheme.At(_root, Ribbon, 1); CadTheme.At(_root, DocumentTabs, 2); CadTheme.At(_root, DockHost, 3);
+        var header = new StackPanel(); header.Children.Add(ApplicationBar); header.Children.Add(MenuBar);
+        CadTheme.At(_root, header, 0); CadTheme.At(_root, Ribbon, 1); CadTheme.At(_root, DocumentTabs, 2); CadTheme.At(_root, DockHost, 3);
         var console = CadTheme.Grid(4, -1); var resize = new Border { Background = CadTheme.Brush(CadTheme.Edge) }; CadUi.Identify(resize, "command.resize", "Resize command window");
         CadTheme.At(console, resize, 0); CadTheme.At(console, CommandLine, 1); CadTheme.At(_root, console, 4);
         bool dragging = false; double start = 0, height = 0;
-        resize.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; dragging = true; start = e.GetCurrentPoint(this).Position.Y; height = _root.RowDefinitions[4].Height.Value; resize.CapturePointer(e.Pointer); e.Handled = true; };
-        resize.PointerMoved += (_, e) => { if (dragging) CommandLine.ResizeTo(Math.Clamp(height + start - e.GetCurrentPoint(this).Position.Y - 4, 74, 350)); };
-        resize.PointerReleased += (_, e) => { dragging = false; resize.ReleasePointerCapture(e.Pointer); e.Handled = true; }; resize.PointerCaptureLost += (_, _) => dragging = false;
-        CommandLine.HeightChanged += h => _root.RowDefinitions[4].Height = new GridLength(h + 4);
+        resize.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; CancelShellInteraction(); dragging = true; start = e.GetCurrentPoint(this).Position.Y; height = CommandLine.PanelHeight;
+            _cancelConsoleResize = () => { dragging = false; CommandLine.ResizeTo(height); resize.ReleasePointerCaptures(); }; resize.CapturePointer(e.Pointer); e.Handled = true; };
+        resize.PointerMoved += (_, e) => { if (dragging) CommandLine.ResizeTo(Math.Clamp(height + start - e.GetCurrentPoint(this).Position.Y, 74, 350)); };
+        resize.PointerReleased += (_, e) => { if (!dragging) return; dragging = false; _cancelConsoleResize = null; resize.ReleasePointerCapture(e.Pointer); NotifyPreferences(); e.Handled = true; };
+        resize.PointerCaptureLost += (_, _) => { if (!dragging) return; dragging = false; _cancelConsoleResize = null; CommandLine.ResizeTo(height); };
+        CommandLine.HeightChanged += h => { _root.RowDefinitions[4].Height = new GridLength(h + 4); if (!dragging) NotifyPreferences(); };
         var bottom = new Grid(); bottom.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); bottom.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         bottom.Children.Add(LayoutTabs); Grid.SetColumn(StatusBar, 1); bottom.Children.Add(StatusBar); CadTheme.At(_root, bottom, 5); Content = _root;
         CadUi.Identify(CommandLine.Input, "command.input", "CAD command input");
-        ApplicationBar.CommandRequested += Invoke; Ribbon.CommandRequested += Invoke; ToolPalette.CommandRequested += Invoke;
+        MenuBar.CommandRequested += Invoke; ApplicationBar.CommandRequested += Invoke; Ribbon.CommandRequested += Invoke; ToolPalette.CommandRequested += Invoke;
         Ribbon.Message += CommandLine.AddMessage; ToolPalette.InsertRequested += Insert; Palette.InsertRequested += Insert;
         Palette.Message += CommandLine.AddMessage; Viewport.Message += CommandLine.AddMessage; Viewport.CoordinatesChanged += StatusBar.SetCoordinates;
         DocumentTabs.NewRequested += () => Invoke("NEW");
@@ -56,10 +62,10 @@ public sealed partial class CadWorkspace : UserControl
         ApplicationBar.ApplicationMenu.ActivateRequested += key => DocumentTabs.RequestActivation(key);
         LayoutTabs.LayoutActivated += () => { Viewport.CancelInteraction(); _commands?.Cancel(); Viewport.Set3D(false); Viewport.Fit(); };
         LayoutTabs.RenameRequested += RenameLayout; LayoutTabs.Message += CommandLine.AddMessage;
-        StatusBar.WorkspaceRequested += SetWorkspace; StatusBar.OptionsRequested += ShowOptions;
+        StatusBar.WorkspaceRequested += SetWorkspace; StatusBar.OptionsRequested += ShowOptions; StatusBar.CustomizationChanged += NotifyPreferences;
         DockHost.LayoutChanged += NotifyPreferences;
         Ribbon.MinimizedChanged += _ => { ApplyChrome(); NotifyPreferences(); };
-        CommandLine.CancelRequested += Viewport.CancelInteraction;
+        CommandLine.CancelRequested += CancelShellInteraction;
         AddShortcut(VirtualKey.N, VirtualKeyModifiers.Control, () => Invoke("NEW")); AddShortcut(VirtualKey.O, VirtualKeyModifiers.Control, () => Invoke("OPEN")); AddShortcut(VirtualKey.S, VirtualKeyModifiers.Control, () => Invoke("SAVE"));
         AddShortcut(VirtualKey.E, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => Invoke("EXPORT")); AddShortcut(VirtualKey.R, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => Invoke("RECOVER"));
         AddShortcut(VirtualKey.Z, VirtualKeyModifiers.Control, () => Invoke("UNDO"), true); AddShortcut(VirtualKey.Y, VirtualKeyModifiers.Control, () => Invoke("REDO"), true); AddShortcut(VirtualKey.A, VirtualKeyModifiers.Control, () => Invoke("SELECTALL"), true);
@@ -71,7 +77,13 @@ public sealed partial class CadWorkspace : UserControl
         AddShortcut(VirtualKey.F3, VirtualKeyModifiers.None, () => StatusBar.Toggle("OSNAP")); AddShortcut(VirtualKey.F7, VirtualKeyModifiers.None, () => StatusBar.Toggle("GRID")); AddShortcut(VirtualKey.F8, VirtualKeyModifiers.None, () => StatusBar.Toggle("ORTHO"));
         AddShortcut(VirtualKey.F9, VirtualKeyModifiers.None, () => StatusBar.Toggle("SNAP")); AddShortcut(VirtualKey.F10, VirtualKeyModifiers.None, () => StatusBar.Toggle("POLAR")); AddShortcut(VirtualKey.F12, VirtualKeyModifiers.None, () => StatusBar.Toggle("DYN"));
         AddShortcut(VirtualKey.W, VirtualKeyModifiers.Control, () => StatusBar.Toggle("SC"), true);
-        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { DockHost.DismissPeek(); Viewport.CancelInteraction(); _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
+        AddShortcut(VirtualKey.F12, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => DispatcherQueue.TryEnqueue(ReportUiBounds));
+        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { CancelShellInteraction(); _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
+    }
+    public void CancelShellInteraction()
+    {
+        var cancel = _cancelConsoleResize; _cancelConsoleResize = null; cancel?.Invoke();
+        DockHost.CancelInteraction(); DockHost.DismissPeek(); Viewport.CancelInteraction();
     }
     public void Invoke(string command)
     {
@@ -90,6 +102,7 @@ public sealed partial class CadWorkspace : UserControl
     private void Insert(string name) { Viewport.CancelInteraction(); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); }
     private void OnShellRequested(string command)
     {
+        if (command is "MENUBAR:0" or "MENUBAR:1") { _menuBarVisible = command.EndsWith('1'); ApplyChrome(); NotifyPreferences(); return; }
         switch (command)
         {
             case "PROPERTIES": DockHost.SetVisible("properties", true); break;
@@ -106,14 +119,19 @@ public sealed partial class CadWorkspace : UserControl
     }
     private void ApplyChrome()
     {
+        MenuBar.Visibility = _menuBarVisible && !_cleanScreen ? Visibility.Visible : Visibility.Collapsed;
+        _root.RowDefinitions[0].Height = new GridLength(MenuBar.Visibility == Visibility.Visible ? 59 : 34);
         Ribbon.Visibility = _cleanScreen ? Visibility.Collapsed : Visibility.Visible;
         _root.RowDefinitions[1].Height = new GridLength(_cleanScreen ? 0 : Ribbon.IsMinimized ? 28 : 120); DockHost.Suspend(_cleanScreen);
     }
-    public WorkspaceLayout CapturePreferences() => new() { Workspace = _workspaceName, RibbonMinimized = Ribbon.IsMinimized, CleanScreen = _cleanScreen, Palettes = DockHost.Capture() };
-    public void RestorePreferences(WorkspaceLayout layout)
+    public WorkspaceLayout CapturePreferences() => new() { Workspace = _workspaceName, RibbonMinimized = Ribbon.IsMinimized, CleanScreen = _cleanScreen,
+        MenuBarVisible = _menuBarVisible, ViewCubeVisible = Viewport.ViewCubeVisible, NavigationBarVisible = Viewport.NavigationBarVisible,
+        CommandHeight = CommandLine.PanelHeight, HiddenStatusItems = StatusBar.HiddenItems, Palettes = DockHost.Capture() };
+    public void RestorePreferences(WorkspaceLayout layout, bool restoreView = true)
     {
         WorkspaceLayout.Validate(layout); _restoring = true;
-        try { _workspaceName = layout.Workspace; StatusBar.SetWorkspace(_workspaceName); Ribbon.Show(_workspaceName == WorkspaceLayout.Presets[0] ? "Home" : "3D Modeling"); Ribbon.SetMinimized(layout.RibbonMinimized); DockHost.Restore(layout.Palettes); Viewport.Set3D(_workspaceName != WorkspaceLayout.Presets[0]); _cleanScreen = layout.CleanScreen; ApplyChrome(); }
+        try { CancelShellInteraction(); _menuBarVisible = layout.MenuBarVisible; Viewport.SetNavigationVisibility(layout.ViewCubeVisible, layout.NavigationBarVisible);
+            CommandLine.ResizeTo(layout.CommandHeight); StatusBar.SetHiddenItems(layout.HiddenStatusItems); _workspaceName = layout.Workspace; StatusBar.SetWorkspace(_workspaceName); Ribbon.Show(_workspaceName == WorkspaceLayout.Presets[0] ? "Home" : "3D Modeling"); Ribbon.SetMinimized(layout.RibbonMinimized); DockHost.Restore(layout.Palettes); if (restoreView) Viewport.Set3D(_workspaceName != WorkspaceLayout.Presets[0]); _cleanScreen = layout.CleanScreen; ApplyChrome(); }
         finally { _restoring = false; }
     }
     private void NotifyPreferences() { if (!_restoring) PreferencesChanged?.Invoke(CapturePreferences()); }
@@ -130,16 +148,13 @@ public sealed partial class CadWorkspace : UserControl
         if (_optionsDialog || _styleDialog || _selectionDialog || XamlRoot == null) return; _optionsDialog = true;
         try
         {
-            var body = new StackPanel { Spacing = 14, Width = 400 };
-            var preset = new ComboBox { Header = "Workspace", ItemsSource = WorkspaceLayout.Presets, SelectedItem = _workspaceName, HorizontalAlignment = HorizontalAlignment.Stretch };
-            var minimized = new CheckBox { Content = "Minimize ribbon to tabs", IsChecked = Ribbon.IsMinimized };
-            var clean = new CheckBox { Content = "Clean screen (Ctrl+0)", IsChecked = _cleanScreen };
-            body.Children.Add(preset); body.Children.Add(minimized); body.Children.Add(clean);
-            var help = CadTheme.Text("Palette headers support docking, floating, pinning, dragging and resizing.\n\nCtrl+1: Properties · Ctrl+3: Tool Palettes\nF2: Command history · F6: Focus command line\nCtrl+Shift+R: Drawing recovery\n\nWorkspace preferences are separate from drawings and undo.", 12, CadTheme.Muted); help.TextWrapping = TextWrapping.Wrap; body.Children.Add(help);
-            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Workspace Options", Content = body, PrimaryButtonText = "Apply", SecondaryButtonText = "Reset workspace", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+            var options = new CadWorkspaceOptions(CapturePreferences()); WorkspaceLayout? chosen = null;
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Options", Content = options, PrimaryButtonText = "Apply", SecondaryButtonText = "Reset workspace", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+            dialog.Resources["ContentDialogMaxWidth"] = 700.0; CadUi.DescribeDialog(dialog, "options.dialog");
+            dialog.PrimaryButtonClick += (_, e) => { try { chosen = options.Capture(); } catch (ArgumentException error) { options.ShowError(error.Message); e.Cancel = true; } };
             var result = await dialog.ShowAsync();
-            if (result == ContentDialogResult.Secondary) { RestorePreferences(WorkspaceLayout.Default); Viewport.Set3D(false); NotifyPreferences(); }
-            else if (result == ContentDialogResult.Primary) { SetWorkspace((string)preset.SelectedItem); Ribbon.SetMinimized(minimized.IsChecked == true); _cleanScreen = clean.IsChecked == true; ApplyChrome(); NotifyPreferences(); }
+            if (result == ContentDialogResult.Secondary) { RestorePreferences(WorkspaceLayout.Default); NotifyPreferences(); }
+            else if (result == ContentDialogResult.Primary && chosen != null) { RestorePreferences(chosen, chosen.Workspace != _workspaceName); NotifyPreferences(); }
         }
         catch (Exception e) { CommandLine.AddMessage(e.Message); }
         finally { _optionsDialog = false; }
@@ -186,25 +201,25 @@ public sealed partial class CadWorkspace : UserControl
         using var buffer = new MemoryStream();
         using (var w = new Utf8JsonWriter(buffer))
         {
-            w.WriteStartObject(); var count = 0;
+            w.WriteStartObject(); var count = 0; var visited = new HashSet<DependencyObject>(); var ids = new HashSet<string>();
             void Visit(DependencyObject node)
             {
-                if (++count > 20000 || node is UIElement { Visibility: Visibility.Collapsed }) return;
+                if (++count > 20000 || !visited.Add(node) || node is UIElement { Visibility: Visibility.Collapsed }) return;
                 if (node is FrameworkElement element && element.ActualWidth > 0 && element.ActualHeight > 0)
                 {
                     var id = AutomationProperties.GetAutomationId(element);
-                    if (!string.IsNullOrEmpty(id))
+                    if (!string.IsNullOrEmpty(id) && !ids.Contains(id))
                     {
                         var p = element.TransformToVisual(this).TransformPoint(new Point(0, 0));
                         if (double.IsFinite(p.X) && double.IsFinite(p.Y) && p.X >= 0 && p.Y >= 0 && p.X < ActualWidth && p.Y < ActualHeight)
-                        { w.WriteStartArray(id); w.WriteNumberValue(p.X); w.WriteNumberValue(p.Y); w.WriteNumberValue(element.ActualWidth); w.WriteNumberValue(element.ActualHeight); w.WriteEndArray(); }
+                        { ids.Add(id); w.WriteStartArray(id); w.WriteNumberValue(p.X); w.WriteNumberValue(p.Y); w.WriteNumberValue(element.ActualWidth); w.WriteNumberValue(element.ActualHeight); w.WriteEndArray(); }
                     }
                 }
                 for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Visit(VisualTreeHelper.GetChild(node, i));
             }
-            Visit(this); w.WriteEndObject();
+            Visit(this); if (XamlRoot != null) foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot)) if (popup.Child != null) Visit(popup.Child); w.WriteEndObject();
         }
         Console.WriteLine("CADSPACE_UI_BOUNDS:" + Encoding.UTF8.GetString(buffer.ToArray()));
-        Console.WriteLine(FormattableString.Invariant($"CADSPACE_UI_STATE: workspace={_workspaceName}; model={Viewport.Is3D}; yaw={Viewport.ModelCamera.Yaw}; pitch={Viewport.ModelCamera.Pitch}; clean={_cleanScreen}"));
+        Console.WriteLine(FormattableString.Invariant($"CADSPACE_UI_STATE: workspace={_workspaceName}; model={Viewport.Is3D}; yaw={Viewport.ModelCamera.Yaw}; pitch={Viewport.ModelCamera.Pitch}; clean={_cleanScreen}; snapModes={(int)(_session?.SnapModes ?? ObjectSnapModes.None)}; grid={_session?.GridVisible}"));
     }
 }

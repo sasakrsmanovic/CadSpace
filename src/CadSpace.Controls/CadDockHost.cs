@@ -3,6 +3,7 @@ using CadSpace.Engine;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Foundation;
+using Windows.System;
 
 namespace CadSpace.Controls;
 
@@ -48,6 +49,13 @@ public sealed class CadDockHost : Grid
     private readonly Border _hint;
     private string? _peek;
     private bool _building, _suspended;
+    private Action? _cancelGesture;
+    public bool HasActiveGesture => _cancelGesture != null;
+    public void CancelInteraction()
+    {
+        var cancel = _cancelGesture; _cancelGesture = null; cancel?.Invoke();
+        _hint.Visibility = Visibility.Collapsed;
+    }
     public event Action? LayoutChanged;
     public CadDockHost(UIElement document)
     {
@@ -78,10 +86,11 @@ public sealed class CadDockHost : Grid
     public void Restore(IEnumerable<PalettePlacement> placements)
     {
         var array = placements.ToImmutableArray(); WorkspaceLayout.Validate(new() { Palettes = array });
+        CancelInteraction();
         foreach (var p in array) if (_panes.ContainsKey(p.Id)) _placements[p.Id] = p;
         _peek = null; Rebuild();
     }
-    public void Suspend(bool suspended) { _suspended = suspended; _peek = null; Rebuild(); }
+    public void Suspend(bool suspended) { CancelInteraction(); _suspended = suspended; _peek = null; Rebuild(); }
     public void Toggle(string id) => SetVisible(id, !_placements[id].Visible);
     public void SetVisible(string id, bool visible) => SetPlacement(_placements[id] with { Visible = visible });
     public void DismissPeek() { if (_peek == null) return; _peek = null; Rebuild(); }
@@ -89,7 +98,7 @@ public sealed class CadDockHost : Grid
     {
         WorkspaceLayout.Validate(new() { Palettes = [placement] });
         if (!_panes.ContainsKey(placement.Id)) throw new ArgumentException("Unknown palette.");
-        _placements[placement.Id] = placement; _peek = null; Rebuild(); LayoutChanged?.Invoke();
+        CancelInteraction(); _placements[placement.Id] = placement; _peek = null; Rebuild(); LayoutChanged?.Invoke();
     }
     private void Rebuild()
     {
@@ -103,7 +112,7 @@ public sealed class CadDockHost : Grid
             var width = Math.Max(1, ActualWidth); var height = Math.Max(1, ActualHeight);
             foreach (var p in _placements.Values.Where(p => p.Visible))
             {
-                var pane = _panes[p.Id]; pane.SetPinned(!p.AutoHide); pane.HorizontalAlignment = HorizontalAlignment.Stretch; pane.VerticalAlignment = VerticalAlignment.Stretch;
+                var pane = _panes[p.Id]; pane.SizeGrip.HorizontalAlignment = p.Dock == PaletteDock.Right ? HorizontalAlignment.Left : HorizontalAlignment.Right; pane.SetPinned(!p.AutoHide); pane.HorizontalAlignment = HorizontalAlignment.Stretch; pane.VerticalAlignment = VerticalAlignment.Stretch;
                 var constrained = p.Constrain(width, height); var narrow = width < 850;
                 if (p.AutoHide || narrow && p.Dock != PaletteDock.Floating)
                 {
@@ -135,29 +144,31 @@ public sealed class CadDockHost : Grid
     private void WireGestures(CadDockPane pane)
     {
         Point start = default; PalettePlacement? before = null; bool dragged = false;
-        pane.DragHandle.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; start = e.GetCurrentPoint(this).Position; before = _placements[pane.Id]; dragged = false; pane.DragHandle.CapturePointer(e.Pointer); e.Handled = true; };
+        pane.DragHandle.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; CancelInteraction(); start = e.GetCurrentPoint(this).Position; before = _placements[pane.Id]; dragged = false;
+            _cancelGesture = () => { before = null; dragged = false; pane.DragHandle.ReleasePointerCaptures(); Rebuild(); }; pane.DragHandle.CapturePointer(e.Pointer); e.Handled = true; };
         pane.DragHandle.PointerMoved += (_, e) => {
             if (before == null) return; var p = e.GetCurrentPoint(this).Position;
             if (Math.Abs(p.X - start.X) + Math.Abs(p.Y - start.Y) < 8 && !dragged) return; dragged = true;
-            _hintText.Text = p.X < 48 ? "Dock left" : p.X > ActualWidth - 48 ? "Dock right" : "Float palette here";
+            _hintText.Text = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control) ? "Float palette (Ctrl)" : p.X < 48 ? "Dock left" : p.X > ActualWidth - 48 ? "Dock right" : "Float palette here";
             _hint.Visibility = Visibility.Visible; Canvas.SetLeft(_hint, Math.Clamp(p.X - 60, 0, Math.Max(0, ActualWidth - 180))); Canvas.SetTop(_hint, Math.Clamp(p.Y + 12, 0, Math.Max(0, ActualHeight - 50)));
             if (before.Dock == PaletteDock.Floating) { var next = (before with { X = before.X + p.X - start.X, Y = before.Y + p.Y - start.Y }).Constrain(ActualWidth, ActualHeight); Canvas.SetLeft(pane, next.X); Canvas.SetTop(pane, next.Y); }
             e.Handled = true;
         };
         pane.DragHandle.PointerReleased += (_, e) => {
-            var old = before; var moved = dragged; var point = e.GetCurrentPoint(this).Position; before = null; dragged = false; _hint.Visibility = Visibility.Collapsed; pane.DragHandle.ReleasePointerCapture(e.Pointer);
+            _cancelGesture = null; var old = before; var moved = dragged; var point = e.GetCurrentPoint(this).Position; before = null; dragged = false; _hint.Visibility = Visibility.Collapsed; pane.DragHandle.ReleasePointerCapture(e.Pointer);
             if (old != null && moved)
             {
-                var dock = point.X < 48 ? PaletteDock.Left : point.X > ActualWidth - 48 ? PaletteDock.Right : PaletteDock.Floating;
+                var dock = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control) ? PaletteDock.Floating : point.X < 48 ? PaletteDock.Left : point.X > ActualWidth - 48 ? PaletteDock.Right : PaletteDock.Floating;
                 var x = old.Dock == PaletteDock.Floating ? old.X + point.X - start.X : point.X - 90;
                 var y = old.Dock == PaletteDock.Floating ? old.Y + point.Y - start.Y : point.Y - 13;
                 SetPlacement(old with { Dock = dock, AutoHide = false, X = Math.Clamp(x, 0, 100000), Y = Math.Clamp(y, 0, 100000) });
             }
             e.Handled = true;
         };
-        pane.DragHandle.PointerCaptureLost += (_, _) => { if (before == null) return; before = null; _hint.Visibility = Visibility.Collapsed; Rebuild(); };
+        pane.DragHandle.PointerCaptureLost += (_, _) => { if (before == null) return; _cancelGesture = null; before = null; _hint.Visibility = Visibility.Collapsed; Rebuild(); };
         Point resizeStart = default; PalettePlacement? resize = null;
-        pane.SizeGrip.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; resize = _placements[pane.Id]; resizeStart = e.GetCurrentPoint(this).Position; pane.SizeGrip.CapturePointer(e.Pointer); e.Handled = true; };
+        pane.SizeGrip.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; CancelInteraction(); resize = _placements[pane.Id]; resizeStart = e.GetCurrentPoint(this).Position;
+            _cancelGesture = () => { if (resize != null) _placements[pane.Id] = resize; resize = null; pane.SizeGrip.ReleasePointerCaptures(); Rebuild(); }; pane.SizeGrip.CapturePointer(e.Pointer); e.Handled = true; };
         pane.SizeGrip.PointerMoved += (_, e) => {
             if (resize == null) return; var p = e.GetCurrentPoint(this).Position;
             var w = Math.Clamp(resize.Width + (p.X - resizeStart.X) * (resize.Dock == PaletteDock.Right ? -1 : 1), 220, 640);
@@ -167,7 +178,7 @@ public sealed class CadDockHost : Grid
             else ColumnDefinitions[resize.Dock == PaletteDock.Left ? 1 : 3].Width = new GridLength(Math.Min(w, ActualWidth * .38));
             e.Handled = true;
         };
-        pane.SizeGrip.PointerReleased += (_, e) => { if (resize == null) return; resize = null; pane.SizeGrip.ReleasePointerCapture(e.Pointer); Rebuild(); LayoutChanged?.Invoke(); e.Handled = true; };
-        pane.SizeGrip.PointerCaptureLost += (_, _) => { if (resize == null) return; _placements[pane.Id] = resize; resize = null; Rebuild(); };
+        pane.SizeGrip.PointerReleased += (_, e) => { if (resize == null) return; _cancelGesture = null; resize = null; pane.SizeGrip.ReleasePointerCapture(e.Pointer); Rebuild(); LayoutChanged?.Invoke(); e.Handled = true; };
+        pane.SizeGrip.PointerCaptureLost += (_, _) => { if (resize == null) return; _cancelGesture = null; _placements[pane.Id] = resize; resize = null; Rebuild(); };
     }
 }

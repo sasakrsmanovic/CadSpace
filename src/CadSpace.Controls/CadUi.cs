@@ -22,6 +22,19 @@ public static class CadUi
         button.Padding = new Thickness(7, 2, 7, 2); button.CornerRadius = new CornerRadius(0);
         return Identify(button, id, text);
     }
+    public static void DescribeDialog(ContentDialog dialog, string id)
+    {
+        Identify(dialog, id, dialog.Title?.ToString() ?? "Dialog");
+        dialog.Loaded += (_, _) => {
+            void Visit(DependencyObject node)
+            {
+                if (node is Button button && button.Name is "PrimaryButton" or "SecondaryButton" or "CloseButton")
+                    Identify(button, id + "." + button.Name, button.Content?.ToString() ?? button.Name);
+                for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(node); i++) Visit(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(node, i));
+            }
+            Visit(dialog);
+        };
+    }
     public static string Label(string command) => command switch {
         "LAYOUT_NEW" => "New Layout", "LAYOUT_RENAME" => "Rename", "LAYOUT_DELETE" => "Delete Layout", "CLEANSCREENON" => "Clean Screen",
         "PLINE" => "Polyline", "RECTANG" => "Rectangle", "DIMALIGNED" => "Dimension", "3DORBIT" => "Orbit",
