@@ -61,6 +61,7 @@ public static class CadProjectCodec
             foreach (var block in parsed.Drawing.Blocks.Values) blocks = blocks.SetItem(block.Name, block with { Entities = Remap(block.Entities, ids.GetProperty("blocks").GetProperty(block.Name)) });
             original = original with { Blocks = blocks };
             if (map.Values.Distinct().Count() != map.Count) throw new FormatException("Duplicate persistent source entity identifiers.");
+            var recordMap = parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value);
             if (root.TryGetProperty("sourceGraph", out var sourceGraph))
             {
                 var savedGraph = ReadDrawing(sourceGraph);
@@ -71,24 +72,36 @@ public static class CadProjectCodec
                 if(savedGraph.Units!=original.Units || savedGraph.Layers.Count!=original.Layers.Count || savedGraph.Layers.Any(p=>!original.Layers.TryGetValue(p.Key,out var layer)||layer!=p.Value) ||
                    savedGraph.LayoutBlockNames.Count!=original.LayoutBlockNames.Count || savedGraph.LayoutBlockNames.Any(p=>!original.LayoutBlockNames.TryGetValue(p.Key,out var value)||value!=p.Value))
                     throw new FormatException("Provenance tables do not match original DXF.");
-                for(var i=0;i<original.Entities.Length;i++) VerifySourceEntity(original.Entities[i],savedGraph.Entities[i]);
+                for(var i=0;i<original.Entities.Length;i++) VerifySourceEntity(original.Entities[i],savedGraph.Entities[i],recordMap.GetValueOrDefault(original.Entities[i].Id));
                 foreach(var (name,block) in original.Blocks)
                 {
                     var saved=savedGraph.Blocks[name]; if(block.BasePoint!=saved.BasePoint)throw new FormatException("Provenance block base point differs from DXF.");
-                    for(var i=0;i<block.Entities.Length;i++)VerifySourceEntity(block.Entities[i],saved.Entities[i]);
+                    for(var i=0;i<block.Entities.Length;i++)VerifySourceEntity(block.Entities[i],saved.Entities[i],recordMap.GetValueOrDefault(block.Entities[i].Id));
                 }
                 if (savedGraph.LinetypeScale != original.LinetypeScale || savedGraph.Linetypes.Count != original.Linetypes.Count || savedGraph.Linetypes.Any(p => !original.Linetypes.TryGetValue(p.Key, out var t) || !Linetype.Equivalent(p.Value, t))) throw new FormatException("Provenance linetypes differ from the original DXF.");
                 CadDocument.Validate(savedGraph); original = savedGraph;
             }
-            source = new(parsed.Source.Text, original, parsed.Source.Sections, parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value)) { OriginalBytes = parsed.Source.OriginalBytes };
+            source = new(parsed.Source.Text, original, parsed.Source.Sections, recordMap) { OriginalBytes = parsed.Source.OriginalBytes };
             // Reuse equal imported instances so untouched group data and exact original-text pass-through remain available.
             drawing = Intern(drawing, original);
         }
         CadDocument.Validate(drawing); return new(drawing, source);
     }
-    private static Entity VerifySourceEntity(Entity actual,Entity saved)
+    private static Entity VerifySourceEntity(Entity actual, Entity saved, ImmutableArray<DxfPair> originalRecord = default)
     {
         actual=actual with{Id=saved.Id};
+        if (saved is OpaqueEntity opaque && actual is not OpaqueEntity)
+        {
+            // An older interpreter may have retained a now-supported root as opaque data.
+            // Preserve that native representation only after validating ALL original group values
+            // and common properties, not merely its displayed geometry or a claimed checksum.
+            if (opaque.RawRecord.Length > DxfCodec.MaximumCharacters || originalRecord.IsDefaultOrEmpty || originalRecord[0].Code != 0 ||
+                originalRecord[0].Value.Trim() != opaque.DxfType ||
+                !DxfCodec.ParsePairs(opaque.RawRecord).SequenceEqual(originalRecord) ||
+                CommonProperties(actual) != CommonProperties(saved))
+                throw new FormatException("Opaque provenance does not match the original DXF record.");
+            return saved;
+        }
         if(actual is PlacedEntity a && saved is PlacedEntity b) actual=a with{Geometry=VerifySourceEntity(a.Geometry,b.Geometry)};
         if(actual is CompositeEntity x && saved is CompositeEntity y)
         {
@@ -98,6 +111,9 @@ public static class CadProjectCodec
         if(!Equivalent(actual,saved))throw new FormatException("Provenance geometry differs from the original DXF. Refusing unsafe source-record reuse.");
         return saved;
     }
+    private static (string Handle, string Layer, int Aci, uint? Color, double Weight,
+        string Linetype, double Scale, bool Visible, string Layout) CommonProperties(Entity e) =>
+        (e.Handle, e.Layer, e.ColorIndex, e.TrueColor, e.LineWeight, e.Linetype, e.LinetypeScale, e.Visible, e.Layout);
     private static Drawing Intern(Drawing drawing, Drawing original)
     {
         var originals = original.Entities.Concat(original.Blocks.Values.SelectMany(b => b.Entities)).ToDictionary(e => e.Id);
