@@ -88,7 +88,7 @@ internal static class DxfEntityWriter
                     else
                     {
                         warn("An affinely deformed bulged polyline is exported as a sampled 3D polyline.");
-                        buffer.Append(emit(Style(new Polyline3DEntity(EntityGeometry.PolylinePoints(poly).Select(t.Point).ToImmutableArray(), poly.Closed))));
+                        buffer.Append(emit(Style(new Polyline3DEntity(EntityGeometry.PolylinePoints(poly).Select(t.Point).ToImmutableArray(), poly.Closed) { ContinuousLinetype = poly.ContinuousLinetype })));
                     }
                     break;
                 case TextEntity textEntity when !textEntity.Multiline:
@@ -122,7 +122,7 @@ internal static class DxfEntityWriter
         switch (entity)
         {
             case Polyline3DEntity poly:
-                Start("POLYLINE", "AcDb3dPolyline"); Pair(66, 1); Point(10, default); Pair(70, 8 | (poly.Closed ? 1 : 0));
+                Start("POLYLINE", "AcDb3dPolyline"); Pair(66, 1); Point(10, default); Pair(70, 8 | (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0));
                 foreach (var p in poly.Points) { Start("VERTEX", "AcDbVertex", nextHandle()); Pair(100, "AcDb3dPolylineVertex"); Point(10, p); Pair(70, 32); }
                 Pair(0, "SEQEND"); Pair(5, nextHandle()); Pair(100, "AcDbEntity"); Pair(8, entity.Layer); break;
             case SplineEntity spline:

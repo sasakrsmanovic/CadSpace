@@ -135,6 +135,10 @@ public sealed partial class CadSession
     }
     private void PruneSelection()
     {
+        if (!Document.Drawing.Layers.ContainsKey(CurrentLayer)) CurrentLayer = "0";
+        if (!CurrentLinetype.Equals("BYLAYER", StringComparison.OrdinalIgnoreCase) &&
+            !CurrentLinetype.Equals("BYBLOCK", StringComparison.OrdinalIgnoreCase) &&
+            !Document.Drawing.Linetypes.ContainsKey(CurrentLinetype)) CurrentLinetype = "BYLAYER";
         EnsureEntityLookup();
         if (_selection.RemoveWhere(id => !_entityLookup.TryGetValue(id, out var e) || !IsVisible(e.Entity)) != 0) SelectionRevision++;
         Changed?.Invoke();

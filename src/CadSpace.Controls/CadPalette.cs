@@ -82,7 +82,7 @@ public sealed class CadPalette : UserControl
         layer.SelectionChanged += (_, _) => { if (_building || layer.SelectedItem is not string name || selected.All(e => e.Layer == name)) return; Try(() => { session.EditableSelection(); if (session.Document.Drawing.Layers[name].Locked) throw new InvalidOperationException("Target layer is locked."); var ids = selected.Select(e => e.Id).ToHashSet(); session.Document.Edit("Change layer", s => s with { Entities = s.Entities.Select(e => ids.Contains(e.Id) ? e with { Layer = name } : e).ToImmutableArray() }); }); };
         _body.Children.Add(CadTheme.Text("Layer", 11, CadTheme.Muted)); _body.Children.Add(layer);
         var lineTypes = new ComboBox { ItemsSource = new[] { "BYLAYER", "BYBLOCK" }.Concat(session.Document.Drawing.Linetypes.Keys.Order()).ToArray(), SelectedItem = selected[0].Linetype, MinHeight = 28, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = editable };
-        lineTypes.SelectionChanged += (_, _) => { if (!_building && lineTypes.SelectedItem is string name && selected.Any(e => e.Linetype != name)) Try(() => session.SetSelectedLinetype(name, selected[0].LinetypeScale)); };
+        lineTypes.SelectionChanged += (_, _) => { if (!_building && lineTypes.SelectedItem is string name && selected.Any(e => e.Linetype != name)) Try(() => session.SetSelectedLinetype(name)); };
         _body.Children.Add(CadTheme.Text("Linetype", 11, CadTheme.Muted)); _body.Children.Add(lineTypes);
         if (selected.Length != 1) return;
         var entity = selected[0]; Field("Handle", entity.Handle.Length == 0 ? "New object" : entity.Handle);

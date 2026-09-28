@@ -194,7 +194,7 @@ public static class CadProjectCodec
                 case HatchEntity e: Points(w, "boundary", e.Boundary); w.WriteNumber("spacing", e.Spacing); w.WriteNumber("angle", e.Angle); w.WriteBoolean("solid", e.Solid); break;
                 case MeshEntity e: Points(w, "vertices", e.Vertices); w.WritePropertyName("triangles"); w.WriteStartArray(); foreach (var index in e.Triangles) w.WriteNumberValue(index); w.WriteEndArray(); w.WriteString("operation", e.Operation); break;
                 case BlockReferenceEntity e: w.WriteString("name", e.Name); Point(w, "point", e.Position); Point(w, "scale", e.Scale); w.WriteNumber("rotation", e.Rotation); break;
-                case Polyline3DEntity e: Points(w, "points", e.Points); w.WriteBoolean("closed", e.Closed); break;
+                case Polyline3DEntity e: Points(w, "points", e.Points); w.WriteBoolean("closed", e.Closed); w.WriteBoolean("continuousLinetype", e.ContinuousLinetype); break;
                 case SplineEntity e:
                     w.WriteNumber("degree", e.Degree); Points(w, "controls", e.ControlPoints); Numbers(w, "knots", e.Knots); Numbers(w, "weights", e.Weights); w.WriteBoolean("closed", e.Closed); w.WriteBoolean("periodic", e.Periodic); break;
                 case PlacedEntity e:
@@ -232,7 +232,7 @@ public static class CadProjectCodec
                 "HATCH" => new HatchEntity(Points(e.GetProperty("boundary")), N(e, "spacing"), N(e, "angle"), e.GetProperty("solid").GetBoolean()),
                 "MESH" => new MeshEntity(Points(e.GetProperty("vertices")), e.GetProperty("triangles").EnumerateArray().Select(i => i.GetInt32()).ToImmutableArray(), S(e, "operation")),
                 "INSERT" => new BlockReferenceEntity(S(e, "name"), P(e, "point"), P(e, "scale"), N(e, "rotation")),
-                "POLYLINE" => new Polyline3DEntity(Points(e.GetProperty("points")), e.GetProperty("closed").GetBoolean()),
+                "POLYLINE" => new Polyline3DEntity(Points(e.GetProperty("points")), e.GetProperty("closed").GetBoolean()) { ContinuousLinetype = e.TryGetProperty("continuousLinetype", out var generated3d) && generated3d.GetBoolean() },
                 "SPLINE" => new SplineEntity(e.GetProperty("degree").GetInt32(), Points(e.GetProperty("controls")), Numbers(e, "knots"), Numbers(e, "weights"), e.GetProperty("closed").GetBoolean(), e.GetProperty("periodic").GetBoolean()),
                 "PLACED" => new PlacedEntity(ReadEntities(e.GetProperty("geometry")).Single(), Matrix(e.GetProperty("matrix"))),
                 "COMPOSITE" => new CompositeEntity(S(e, "dxfType"), ReadEntities(e.GetProperty("children")), S(e, "source")),

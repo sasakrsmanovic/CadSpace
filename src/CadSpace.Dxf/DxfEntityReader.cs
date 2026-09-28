@@ -142,7 +142,7 @@ internal static class DxfEntityReader
             return new MeshEntity(vertices.Select(v => P(v, 10)).ToImmutableArray(), indices.ToImmutable(), "DXF polygon mesh");
         }
         if ((flags & 6) != 0) throw new NotSupportedException("Curve-fit legacy POLYLINE requires its fitted-curve interpreter.");
-        if ((flags & 8) != 0) return new Polyline3DEntity(vertices.Select(v => P(v, 10)).ToImmutableArray(), (flags & 1) != 0);
+        if ((flags & 8) != 0) return new Polyline3DEntity(vertices.Select(v => P(v, 10)).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 };
         if (N(header, 40) != 0 || N(header, 41) != 0 || vertices.Any(v => N(v, 40) != 0 || N(v, 41) != 0)) throw new NotSupportedException("Wide legacy POLYLINE is retained without flattening widths.");
         var elevation = N(header, 30);
         return inPlane(new PolylineEntity(vertices.Select(v => new PolyVertex(new(P(v, 10).X, P(v, 10).Y, elevation), N(v, 42))).ToImmutableArray(), (flags & 1) != 0) { ContinuousLinetype = (flags & 128) != 0 });

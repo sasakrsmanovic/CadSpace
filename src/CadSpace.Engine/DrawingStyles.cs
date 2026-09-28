@@ -22,12 +22,12 @@ public static class DrawingStyles
         }
         session.CurrentLinetype = name; session.Invalidate();
     }
-    public static void SetSelectedLinetype(this CadSession session, string name, double scale)
+    public static void SetSelectedLinetype(this CadSession session, string name, double? scale = null)
     {
-        if (!double.IsFinite(scale) || scale <= 0 || scale > 1e9) throw new ArgumentException("Linetype scale must be positive and no larger than 1e9.");
+        if (scale is double value && (!double.IsFinite(value) || value <= 0 || value > 1e9)) throw new ArgumentException("Linetype scale must be positive and no larger than 1e9.");
         if (!name.Equals("BYLAYER", StringComparison.OrdinalIgnoreCase) && !name.Equals("BYBLOCK", StringComparison.OrdinalIgnoreCase) && !session.Document.Drawing.Linetypes.ContainsKey(name)) throw new ArgumentException("Unknown linetype.");
         var selected = session.EditableSelection().Select(e => e.Id).ToHashSet();
-        session.Document.Edit("Linetype properties", d => d with { Entities = d.Entities.Select(e => selected.Contains(e.Id) ? e with { Linetype = name, LinetypeScale = scale } : e).ToImmutableArray() });
+        session.Document.Edit("Linetype properties", d => d with { Entities = d.Entities.Select(e => selected.Contains(e.Id) ? e with { Linetype = name, LinetypeScale = scale ?? e.LinetypeScale } : e).ToImmutableArray() });
     }
     public static void AddLayer(this CadSession session, string name)
     {
@@ -39,6 +39,7 @@ public static class DrawingStyles
         if (!session.Document.Drawing.Layers.ContainsKey(oldName)) throw new ArgumentException("The layer no longer exists.");
         if (!Linetype.ValidName(layer.Name)) throw new ArgumentException("Invalid layer name.");
         if (!session.Document.Drawing.Linetypes.ContainsKey(layer.Linetype)) throw new ArgumentException("Load the layer linetype first.");
+        var wasCurrent = session.CurrentLayer.Equals(oldName, StringComparison.OrdinalIgnoreCase);
         var rename = !string.Equals(oldName, layer.Name, StringComparison.Ordinal);
         if (rename && oldName == "0") throw new ArgumentException("Layer 0 cannot be renamed.");
         if (rename && !oldName.Equals(layer.Name, StringComparison.OrdinalIgnoreCase) && session.Document.Drawing.Layers.ContainsKey(layer.Name)) throw new ArgumentException("Layer name already exists.");
@@ -58,7 +59,7 @@ public static class DrawingStyles
             Entities = rename ? d.Entities.Select(Replace).ToImmutableArray() : d.Entities,
             Blocks = rename ? d.Blocks.ToImmutableDictionary(p => p.Key, p => p.Value with { Entities = p.Value.Entities.Select(Replace).ToImmutableArray() }, StringComparer.OrdinalIgnoreCase) : d.Blocks
         });
-        if (session.CurrentLayer.Equals(oldName, StringComparison.OrdinalIgnoreCase)) session.CurrentLayer = layer.Name;
+        if (wasCurrent) session.CurrentLayer = layer.Name;
         session.Invalidate();
     }
     public static void DeleteLayer(this CadSession session, string name)

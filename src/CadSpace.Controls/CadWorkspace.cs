@@ -114,7 +114,7 @@ public sealed partial class CadWorkspace : UserControl
         AddShortcut(VirtualKey.F12,VirtualKeyModifiers.None,()=>StatusBar.Toggle("DYN"));
         AddShortcut(VirtualKey.Number1,VirtualKeyModifiers.Control,()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();});
         CadTheme.At(root, CommandLine, 5); CadTheme.At(root, StatusBar, 6); Content = root;
-        Ribbon.CommandRequested += command => { if (_commands == null) return; if (command == "QSELECT") { ShowQuickSelect(); return; } if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP" or "RENDERSTATS" or "SELECTSIMILAR")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
+        Ribbon.CommandRequested += command => { if (_commands == null) return; if (command == "QSELECT") { ShowQuickSelect(); return; } if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP" or "RENDERSTATS" or "SELECTSIMILAR" or "LAYER" or "LINETYPE")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
         Viewport.CoordinatesChanged += StatusBar.SetCoordinates; Viewport.Message += CommandLine.AddMessage; Palette.Message += CommandLine.AddMessage;
         Palette.InsertRequested += name => { Viewport.Set3D(false); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); };
         DocumentTabs.NewRequested += () => FileRequested?.Invoke("NEW");

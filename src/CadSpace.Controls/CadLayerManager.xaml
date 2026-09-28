@@ -1,24 +1,25 @@
 <UserControl x:Class="CadSpace.Controls.CadLayerManager"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CadSpace.Controls">
     <UserControl.Resources>
-        <DataTemplate x:Key="LayerRowTemplate">
+        <DataTemplate x:Key="LayerRowTemplate" x:DataType="local:CadLayerRow">
             <Grid Height="30" ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="24"/><ColumnDefinition Width="200"/>
                     <ColumnDefinition Width="42"/><ColumnDefinition Width="48"/>
                     <ColumnDefinition Width="90"/><ColumnDefinition Width="150"/><ColumnDefinition Width="60"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding Current}" Foreground="#64B5F6" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="2" Text="{Binding VisibilityText}" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="3" Text="{Binding LockText}" VerticalAlignment="Center"/>
+                <TextBlock Text="{x:Bind Current}" Foreground="#64B5F6" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="{x:Bind VisibilityText}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="3" Text="{x:Bind LockText}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Rectangle Width="12" Height="12" Fill="{Binding Swatch}"/>
-                    <TextBlock Text="{Binding ColorText}" FontSize="10"/>
+                    <Rectangle Width="12" Height="12" Fill="{x:Bind Swatch}"/>
+                    <TextBlock Text="{x:Bind ColorText}" FontSize="10"/>
                 </StackPanel>
-                <TextBlock Grid.Column="5" Text="{Binding Linetype}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="6" Text="{Binding Weight}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="5" Text="{x:Bind Linetype}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="6" Text="{x:Bind Weight}" VerticalAlignment="Center"/>
             </Grid>
         </DataTemplate>
     </UserControl.Resources>
