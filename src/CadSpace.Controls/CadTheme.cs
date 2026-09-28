@@ -10,12 +10,17 @@ namespace CadSpace.Controls;
 
 public static class CadTheme
 {
-    public const uint Background = 0xFF252B34, Panel = 0xFF303741, Raised = 0xFF39424F, Edge = 0xFF48515D, TextColor = 0xFFDCE2EB, Muted = 0xFF9AA8BA, Accent = 0xFF4A9DE9;
+    // Reference the existing Uno package asset directly. Do not resolve the UI face
+    // through a machine-dependent family-name fallback or a variable-font manifest.
+    public const string UiFontSource = "ms-appx:///Uno.Fonts.OpenSans/Fonts/OpenSans-Regular.ttf";
+    public static FontFamily UiFont { get; } = new(UiFontSource);
+    public const uint Background = 0xFF252F3D, Panel = 0xFF3B4758, Raised = 0xFF4A5769, Edge = 0xFF526074, TextColor = 0xFFDCE2EB, Muted = 0xFF9AA8BA, Accent = 0xFF4A9DE9;
     public static SolidColorBrush Brush(uint color) => new(Windows.UI.Color.FromArgb((byte)(color >> 24), (byte)(color >> 16), (byte)(color >> 8), (byte)color));
-    public static TextBlock Text(string text, double size = 12, uint color = TextColor) => new() { Text = text, FontSize = size, Foreground = Brush(color), VerticalAlignment = VerticalAlignment.Center };
+    public static TextBlock Text(string text, double size = 12, uint color = TextColor) => new() { Text = text, FontFamily = UiFont, FontSize = size, Foreground = Brush(color), VerticalAlignment = VerticalAlignment.Center };
     public static Button Button(string title, Action action, double width = double.NaN)
     {
-        var button = new Button { Content = title, Padding = new Thickness(9, 4, 9, 4), MinHeight = 26, FontSize = 12, Background = Brush(Panel), Foreground = Brush(TextColor), BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(2), Width = width };
+        var button = new Button { Content = title, FontFamily = UiFont, Padding = new Thickness(9, 4, 9, 4), MinHeight = 26, FontSize = 12, Background = Brush(Panel), Foreground = Brush(TextColor), BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(2), Width = width };
+        CadUi.SetButtonLabel(button, title);
         button.Click += (_, _) => action(); AutomationProperties.SetName(button, title); return button;
     }
     public static Border Box(UIElement content, uint color = Panel, double padding = 0) => new() { Child = content, Background = Brush(color), Padding = new Thickness(padding) };
@@ -34,6 +39,7 @@ public sealed class CadIcon : SKCanvasElement
     {
         canvas.Save(); canvas.Scale((float)(area.Width / 32), (float)(area.Height / 32));
         using var p = new SKPaint { Color = new SKColor(138, 205, 241), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.8f, StrokeCap = SKStrokeCap.Round };
+        if (CadShellArtwork.Draw(Kind, canvas, p)) { canvas.Restore(); return; }
         void Line(float a, float b, float c, float d) => canvas.DrawLine(a, b, c, d, p);
         void Rect(float x, float y, float w, float h) => canvas.DrawRect(x, y, w, h, p);
         switch (Kind)

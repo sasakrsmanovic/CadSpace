@@ -24,6 +24,16 @@ public sealed class CommandEngine(CadSession session)
     public event Action<string>? ViewRequested;
     public static IReadOnlyList<CommandInfo> Commands { get; } = new CommandInfo[]
     {
+        new("UISTATS", "UISTATS", "Report rendered control bounds and workspace state", "Workspace"),
+        new("PROPERTIES", "PR", "Show the Properties palette", "Workspace"),
+        new("PROPERTIESCLOSE", "PROPERTIESCLOSE", "Hide the Properties palette", "Workspace"),
+        new("TOOLPALETTES", "TP", "Show searchable tool and block palettes", "Workspace"),
+        new("TOOLPALETTESCLOSE", "TOOLPALETTESCLOSE", "Hide Tool Palettes", "Workspace"),
+        new("RIBBON", "RIBBON", "Show the expanded ribbon", "Workspace"),
+        new("RIBBONCLOSE", "RIBBONCLOSE", "Minimize the ribbon to tabs", "Workspace"),
+        new("CLEANSCREENON", "CLEANSCREENON", "Hide ribbon and palettes without changing the drawing", "Workspace"),
+        new("CLEANSCREENOFF", "CLEANSCREENOFF", "Restore the saved workspace controls", "Workspace"),
+        new("OPTIONS", "OP", "Workspace and display preferences", "Workspace"),
         new("RENDERSTATS", "RS", "Report actual scene, overlay and GPU draw counts", "View"),
         new("STRETCH", "S", "Crossing corners, base point and displacement point; supported vertices", "Modify"),
         new("QSELECT", "QS", "Filter kind,layer,mode,scope; * wildcard, Replace/Add/Remove, All/Selection", "Edit"),
@@ -37,6 +47,7 @@ public sealed class CommandEngine(CadSession session)
         new("SWEEP", "SW", "Parallel-transport mesh sweep of a profile along an open polyline", "Model"),
         new("LAYER", "LA", "Layer Properties Manager", "Manage"), new("LINETYPE", "LT", "Linetype Manager", "Manage"),
         new("LTSCALE", "LTSCALE", "Global drawing linetype scale", "Manage"), new("CELTSCALE", "CELTSCALE", "Linetype scale for new objects", "Manage"), new("CELTYPE", "CELTYPE", "Current linetype; built-in patterns load by name", "Manage"),
+        new("MENUBAR", "MENUBAR", "Display classic menu bar: 1 on, 0 off", "Manage"),
         new("PEDIT", "PE", "Selected polylines: Width, Open, Close or Reverse", "Modify"),
         new("PLINEWID", "PLINEWID", "Default width of new polylines and rectangles", "Draw"),
         new("LINE", "L", "Connected line segments", "Draw"), new("PLINE", "PL", "Polyline; Enter finishes, C closes", "Draw"), new("RECTANG", "REC", "Rectangle from two corners", "Draw"),
@@ -86,6 +97,17 @@ public sealed class CommandEngine(CadSession session)
                     case "SELECTALL": Session.SelectAll(); Cancel(); return;
                     case "SELECTSIMILAR": Session.SelectSimilar(); Cancel(); return;
                     case "HELP": Message?.Invoke(string.Join("  ·  ", Commands.Select(c => $"{c.Name} ({c.Alias})"))); Cancel(); return;
+                    case "UISTATS":
+                    case "PROPERTIES":
+                    case "PROPERTIESCLOSE":
+                    case "TOOLPALETTES":
+                    case "TOOLPALETTESCLOSE":
+                    case "RIBBON":
+                    case "RIBBONCLOSE":
+                    case "CLEANSCREENON":
+                    case "CLEANSCREENOFF":
+                    case "OPTIONS":
+                        ViewRequested?.Invoke(_active); Cancel(); return;
                     case "RENDERSTATS": case "LAYER": case "LINETYPE": case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
                     case "AREA":
                         var polygons = Session.EditableSelection().OfType<PolylineEntity>().Where(p => p.Closed).ToArray();
@@ -158,7 +180,7 @@ public sealed class CommandEngine(CadSession session)
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(ex.Message); Cancel(); }
     }
-    private bool RequiresNumber => _active is "PEDIT" or "PLINEWID" or "LTSCALE" or "CELTSCALE" or "CELTYPE" or "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
+    private bool RequiresNumber => _active is "MENUBAR" or "PEDIT" or "PLINEWID" or "LTSCALE" or "CELTSCALE" or "CELTYPE" or "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
     public void Point(Vec3 point)
     {
         if (!IsActive || !point.IsFinite) return;
@@ -204,6 +226,9 @@ public sealed class CommandEngine(CadSession session)
     {
         switch (_active)
         {
+            case "MENUBAR":
+                if (value is not (0 or 1)) throw new ArgumentException("MENUBAR accepts 0 or 1.");
+                ViewRequested?.Invoke(value == 0 ? "MENUBAR:0" : "MENUBAR:1"); break;
             case "PEDIT" when _text == "WIDTH": Session.SetWidth(value); break;
             case "PLINEWID":
                 if (value < 0 || value > 1e12) throw new ArgumentException("Polyline width must be between 0 and 1e12.");
@@ -255,6 +280,7 @@ public sealed class CommandEngine(CadSession session)
     {
         Prompt = _active switch
         {
+            "MENUBAR" => "Enter 1 to show the classic menu bar or 0 to hide it",
             "PEDIT" => _text == "WIDTH" ? "Specify uniform polyline width (0 for a centerline)" : "Enter Width / Open / Close / Reverse",
             "PLINEWID" => "Specify default polyline width (drawing units)",
             "LTSCALE" => "Specify global linetype scale",

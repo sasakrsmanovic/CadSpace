@@ -23,9 +23,13 @@ public sealed partial class App : Application
         _workspace = new CadWorkspace();
         MainWindow = new Window { Title = "CadSpace — Drafting & Modeling", Content = _workspace };
         _workspace.FileRequested += ExecuteFile;
+        _workspace.PreferencesChanged += QueueWorkspaceSave;
+        _workspace.DocumentTabs.MoveRequested += (key, index) => {
+            if (key is OpenDrawing drawing && _documents.Remove(drawing)) { _documents.Insert(Math.Clamp(index, 0, _documents.Count), drawing); RefreshTabs(); }
+        };
         _workspace.DocumentTabs.ActivateRequested += key => Activate((OpenDrawing)key);
         _workspace.DocumentTabs.CloseRequested += async key => await Close((OpenDrawing)key);
-        _workspace.Loaded += (_, _) => { _workspace.CommandLine.FocusInput(); StartRecovery(); };
+        _workspace.Loaded += (_, _) => { _workspace.CommandLine.FocusInput(); StartRecovery(); LoadWorkspacePreferences(); };
         Open(SampleDrawings.StudioPlan()); MainWindow.Activate();
     }
     private void Open(Drawing drawing, DxfSource? source = null, bool model = false, string? displayName = null)

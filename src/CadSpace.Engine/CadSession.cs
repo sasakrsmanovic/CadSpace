@@ -37,6 +37,9 @@ public sealed partial class CadSession
     public string CurrentLinetype { get; set; } = "BYLAYER";
     public double CurrentLinetypeScale { get; set; } = 1;
     public double CurrentPolylineWidth { get; set; }
+    public int CurrentColorIndex { get; set; } = 256;
+    public uint? CurrentTrueColor { get; set; }
+    public double CurrentLineWeight { get; set; } = -1;
     public bool GridVisible { get; set; } = true;
     public bool GridSnap { get; set; }
     public bool ObjectSnap { get; set; } = true;
@@ -119,7 +122,7 @@ public sealed partial class CadSession
         if (!Document.Drawing.Layers.TryGetValue(CurrentLayer, out var layer)) CurrentLayer = "0";
         else if (layer.Locked) throw new InvalidOperationException("The current layer is locked.");
         foreach (var entity in entities) if (!double.IsFinite(entity.LinetypeScale) || entity.LinetypeScale <= 0) throw new ArgumentException("Invalid entity linetype scale.");
-        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer, Layout = ActiveLayout, Linetype = CurrentLinetype, LinetypeScale = CurrentLinetypeScale }).ToArray());
+        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer, Layout = ActiveLayout, Linetype = CurrentLinetype, LinetypeScale = CurrentLinetypeScale, ColorIndex = e.ColorIndex == 256 ? CurrentColorIndex : e.ColorIndex, TrueColor = e.TrueColor ?? CurrentTrueColor, LineWeight = e.LineWeight < 0 ? CurrentLineWeight : e.LineWeight }).ToArray());
     }
     public void TransformSelection(string name, Transform3 transform, bool copy = false)
     {

@@ -5,6 +5,7 @@ RecoveryRegression.Register((name,run)=>tests.Add((name,run)));
 LinetypeRegression.Register((name,run)=>tests.Add((name,run)));
 StyleReviewRegression.Register((name,run)=>tests.Add((name,run)));
 BoundsRegression.Register((name,run)=>tests.Add((name,run)));
+WorkspaceRegression.Register((name,run)=>tests.Add((name,run)));
 var failures=0;
 foreach(var (name,run) in tests)
     try {run();Console.WriteLine($"PASS {name}");}

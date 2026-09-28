@@ -1,0 +1,65 @@
+using System.Collections.Immutable;
+using CadSpace.Engine;
+using CadSpace.Model;
+using CadSpace.Rendering;
+using CadSpace.Geometry;
+
+internal static class WorkspaceRegression
+{
+    public static void Register(Action<string, Action> test)
+    {
+        void Check(bool value) { if (!value) throw new Exception("Workspace assertion failed."); }
+        void Reject(Action action) { try { action(); } catch (Exception e) when (e is ArgumentException or FormatException or InvalidOperationException or NotSupportedException) { return; } throw new Exception("Expected rejection."); }
+        test("display preferences roundtrip independently of drawings", () => {
+            var a = WorkspaceLayout.Default with { MenuBarVisible = true, ViewCubeVisible = false, NavigationBarVisible = false, CommandHeight = 124, HiddenStatusItems = ["SNAP", "SC"] };
+            var session = new CadSession(); var before = session.Document.Drawing; var b = WorkspaceLayout.Decode(a.Encode());
+            Check(a.Encode() == b.Encode() && before == session.Document.Drawing && !session.Document.CanUndo);
+        });
+        test("legacy workspace preferences gain conservative display defaults", () => {
+            var a = WorkspaceLayout.Decode("{\"version\":1,\"workspace\":\"Drafting & Annotation\",\"ribbonMinimized\":false,\"cleanScreen\":false,\"palettes\":[]}");
+            Check(a.CommandHeight == 74 && !a.MenuBarVisible && a.ViewCubeVisible && a.NavigationBarVisible && a.HiddenStatusItems.IsEmpty);
+        });
+        test("console preferences reject nonfinite or unbounded heights", () => {
+            foreach (var height in new[] { double.NaN, double.PositiveInfinity, 73, 351 }) Reject(() => (WorkspaceLayout.Default with { CommandHeight = height }).Encode());
+        });
+        test("status customization rejects unknown or duplicate items", () => {
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = ["GRID", "GRID"] }).Encode());
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = ["UNKNOWN"] }).Encode());
+            Reject(() => (WorkspaceLayout.Default with { HiddenStatusItems = default }).Encode());
+        });
+        test("all status controls can be hidden without changing snap or grid state", () => {
+            var session = new CadSession(); var modes = session.SnapModes; var layout = WorkspaceLayout.Default with { HiddenStatusItems = WorkspaceLayout.StatusItems.ToImmutableArray() };
+            Check(WorkspaceLayout.Decode(layout.Encode()).HiddenStatusItems.Length == 7 && session.GridVisible && session.SnapModes == modes);
+        });
+        test("MENUBAR dispatches on and off without an undo transaction", () => {
+            var session = new CadSession(); var engine = new CommandEngine(session); var views = new List<string>(); engine.ViewRequested += views.Add;
+            foreach (var value in new[] { "MENUBAR", "1", "MENUBAR", "0" }) engine.Submit(value);
+            Check(views.SequenceEqual(new[] { "MENUBAR:1", "MENUBAR:0" }) && !session.Document.CanUndo);
+        });
+        test("invalid MENUBAR values do not mutate UI or drawing state", () => {
+            var engine = new CommandEngine(new()); var changed = false; engine.ViewRequested += _ => changed = true;
+            foreach (var value in new[] { "MENUBAR", "-1", "MENUBAR", "2" }) engine.Submit(value); Check(!changed && !engine.IsActive);
+        });
+        test("workspace preferences preserve palette placement and state", () => { var a = new WorkspaceLayout { Workspace = "3D Modeling", RibbonMinimized = true, CleanScreen = true, Palettes = [new("properties", PaletteDock.Floating, true, false, 300, 500, 70, 90), new("tools", PaletteDock.Left, false, true)] }; var b = WorkspaceLayout.Decode(a.Encode()); Check(a.Encode() == b.Encode()); });
+        test("workspace rejects duplicated palette identities", () => Reject(() => (WorkspaceLayout.Default with { Palettes = [new("p"), new("p")] }).Encode()));
+        test("workspace rejects nonfinite placement", () => Reject(() => (WorkspaceLayout.Default with { Palettes = [new("p", X: double.NaN)] }).Encode()));
+        test("workspace rejects unknown version and invalid dock enum", () => { Reject(() => WorkspaceLayout.Decode(WorkspaceLayout.Default.Encode().Replace("\"version\":1", "\"version\":99"))); Reject(() => (WorkspaceLayout.Default with { Palettes = [new("p", (PaletteDock)99)] }).Encode()); });
+        test("floating placement fits small hosts without mutating preferences", () => { var a = new PalettePlacement("p", PaletteDock.Floating, X: 9000, Y: 8000); var b = a.Constrain(180, 140); Check(b.Width == 180 && b.Height == 140 && b.X == 0 && b.Y == 0 && a.X == 9000); });
+        test("floating placement remains accessible after host resize", () => { var a = new PalettePlacement("p", PaletteDock.Floating, X: 990, Y: 890).Constrain(1000, 900); Check(a.X + a.Width <= 1000 && a.Y + a.Height <= 900); });
+        test("layout creation is undoable and has unique paper block identity", () => { var s = new CadSession(); var old = s.Document.Drawing; var name = s.AddLayout(); Check(name == "Layout2" && s.ActiveLayout == name); Check(s.Document.Drawing.LayoutBlockNames.Values.Distinct().Count() == 3); s.Document.Undo(); Check(s.Document.Drawing == old); });
+        test("layout rename retains object IDs and block mapping", () => { var s = new CadSession(); var name = s.AddLayout(); s.Add("point", new PointEntity(default)); var old = s.Document.Drawing; var id = old.Entities[0].Id; s.RenameLayout(name, "Sheet A"); Check(s.ActiveLayout == "Sheet A" && s.Document.Drawing.Entities[0].Id == id && s.Document.Drawing.Entities[0].Layout == "Sheet A" && s.Document.Drawing.LayoutBlockNames["Sheet A"] == old.LayoutBlockNames[name]); s.Document.Undo(); Check(s.Document.Drawing == old); });
+        test("Model layout is protected", () => { var s = new CadSession(); Reject(() => s.RenameLayout("Model", "Other")); Reject(() => s.DeleteEmptyLayout("Model")); });
+        test("nonempty layout cannot be deleted", () => { var s = new CadSession(); var name = s.AddLayout(); s.Add("point", new PointEntity(default)); var before = s.Document.Drawing; Reject(() => s.DeleteEmptyLayout(name)); Check(s.Document.Drawing == before); });
+        test("empty layout deletion returns to Model", () => { var s = new CadSession(); var name = s.AddLayout(); s.DeleteEmptyLayout(name); Check(s.ActiveLayout == "Model" && !s.AvailableLayouts.Contains(name)); });
+        test("opaque layout rename cannot corrupt source references", () => { var s = new CadSession(); var name = s.AddLayout(); s.Document.Add("opaque", new OpaqueEntity("X", "0\nX\n") { Layout = name }); Reject(() => s.RenameLayout(name, "Other")); });
+        test("ribbon layer assignment is atomic for locked destinations", () => { var s = new CadSession(); s.Add("line", new LineEntity(default, Vec3.UnitX)); s.AddLayer("Locked"); s.UpdateLayer("Locked", new("Locked", Locked: true)); s.SelectAll(); var old = s.Document.Drawing; Reject(() => s.AssignLayer("Locked")); Check(s.Document.Drawing == old); });
+        test("ribbon layer assignment updates only selected objects", () => { var s = new CadSession(); s.Add("points", new PointEntity(default), new PointEntity(Vec3.UnitX)); s.AddLayer("A"); s.Select(s.Document.Drawing.Entities[1].Id); s.AssignLayer("A"); Check(s.Document.Drawing.Entities[0].Layer == "0" && s.Document.Drawing.Entities[1].Layer == "A"); });
+        test("ribbon color and weight apply to subsequent commands", () => { var s = new CadSession(); s.AssignColor(1); s.AssignWeight(.5); var c = new CommandEngine(s); foreach (var value in new[] { "LINE", "0,0", "10,0", "" }) c.Submit(value); var line = s.Document.Drawing.Entities.Single(); Check(line.ColorIndex == 1 && line.LineWeight == .5); });
+        test("ribbon type-only assignments retain mixed scales and colors", () => { var s = new CadSession(); s.Document.Add("points", new PointEntity(default) { ColorIndex = 1, LinetypeScale = 2 }, new PointEntity(Vec3.UnitX) { ColorIndex = 3, LinetypeScale = 4 }); s.SelectAll(); s.SetSelectedLinetype("CONTINUOUS"); Check(s.Document.Drawing.Entities[0].ColorIndex == 1 && s.Document.Drawing.Entities[1].LinetypeScale == 4); });
+        test("workspace commands dispatch without changing drawings", () => { var s = new CadSession(); var c = new CommandEngine(s); var seen = new List<string>(); c.ViewRequested += seen.Add; var old = s.Document.Drawing; foreach (var name in new[] { "PROPERTIES", "TOOLPALETTES", "RIBBONCLOSE", "CLEANSCREENON", "CLEANSCREENOFF", "OPTIONS", "UISTATS" }) c.Start(name); Check(seen.Count == 7 && s.Document.Drawing == old && !c.IsActive); });
+        test("standard view cube orientations point along canonical axes", () => { foreach (var name in ViewCubeGeometry.Names) { var o = ViewCubeGeometry.Named(name); var c = new Camera3D { Yaw = o.Yaw, Pitch = o.Pitch }; Check(Math.Abs(c.Backward.Length - 1) < 1e-10 && Math.Abs(c.Up.Dot(c.Backward)) < 1e-10); } });
+        test("top and bottom camera matrices are finite and nonsingular", () => { foreach (var pitch in new[] { -90d, 90d }) { var c = new Camera3D { Pitch = pitch, Yaw = -90 }; var m = c.Matrix(1.6); Check(System.Numerics.Matrix4x4.Invert(m, out var inverse) && float.IsFinite(inverse.M11)); } });
+        test("cube top face center and corner pick different views", () => { var faces = ViewCubeGeometry.Faces(-90, 90); Check(faces.Length == 1 && faces[0].Name == "TOP"); var center = ViewCubeGeometry.Pick(faces, 64, 64); var corner = ViewCubeGeometry.Pick(faces, 43, 43); Check(center == ViewCubeGeometry.Named("Top") && corner?.Pitch > 35 && corner?.Pitch < 36); Check(ViewCubeGeometry.Pick(faces, 0, 0) == null); });
+        test("cube visible faces remain bounded under arbitrary orbit", () => { for (var y = -180; y < 180; y += 15) for (var p = -90; p <= 90; p += 15) { var f = ViewCubeGeometry.Faces(y, p); Check(f.Length is >= 1 and <= 3); Check(f.SelectMany(x => x.Points).All(v => v.IsFinite && v.X > 0 && v.X < 128 && v.Y > 0 && v.Y < 128)); } });
+    }
+}
