@@ -59,31 +59,36 @@ async def main():
             await command('LTSCALE','2');assert '*' in await page.title()
             # Perform actual manager edits and check the application's real saved native checkpoint.
             # No test-only model API: persistence is the same IndexedDB adapter used by recovery.
-            async def fill(x, y, text, expected=None):
-                # Uno renders controls on a canvas and retargets its native keyboard input
-                # asynchronously. Wait for that input to occupy the clicked field before
-                # typing; otherwise the dialog's initial Search focus can receive the text.
+            async def fill(x, y, text, expected=None, require_change=True):
+                # Uno's Skia keyboard input is intentionally 1x1 at (0,0), not at
+                # the rendered field. Its native data-handle identifies the focused
+                # TextBox. Await retargeting, then type through real keyboard events.
+                read_focus = """() => {
+                    const input = document.activeElement;
+                    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return null;
+                    return {handle:input.getAttribute('data-handle'),value:input.value};
+                }"""
+                previous = await page.evaluate(read_focus)
                 focus = None
                 for _ in range(10):
                     await page.mouse.click(x, y)
                     await page.wait_for_timeout(150)
-                    focus = await page.evaluate("""() => {
-                        const input = document.activeElement;
-                        if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return null;
-                        const r = input.getBoundingClientRect();
-                        return {x:r.x,y:r.y,width:r.width,height:r.height,value:input.value};
-                    }""")
-                    if (focus and focus['x'] - 8 <= x <= focus['x'] + focus['width'] + 8 and
-                            focus['y'] - 8 <= y <= focus['y'] + focus['height'] + 8):
-                        break
+                    focus = await page.evaluate(read_focus)
+                    if focus and focus['handle'] and (not require_change or previous is None or focus['handle'] != previous['handle']):
+                        await page.wait_for_timeout(150)
+                        stable = await page.evaluate(read_focus)
+                        if stable and stable['handle'] == focus['handle']:
+                            focus = stable
+                            break
                 else:
-                    raise AssertionError(f'Native input did not focus the field at {(x,y)}: {focus}')
+                    raise AssertionError(f'Native keyboard input did not retarget the field at {(x,y)}: {previous} -> {focus}')
                 if expected is not None:
                     assert focus['value'] == expected, (expected, focus)
                 await page.keyboard.press('Control+a')
                 await page.keyboard.type(text, delay=15)
                 await page.wait_for_timeout(150)
-                assert await page.evaluate('() => document.activeElement.value') == text
+                actual = await page.evaluate(read_focus)
+                assert actual and actual['handle'] == focus['handle'] and actual['value'] == text, actual
             await command('LAYER')
             await fill(500,606,'QA_TEMP');await page.mouse.click(675,606);await page.wait_for_timeout(300)
             await page.mouse.click(490,376);await page.wait_for_timeout(200)
@@ -128,7 +133,7 @@ async def main():
             assert isinstance(project, dict), 'No committed native checkpoint contains the expected layer properties and line geometry'
             (output/'layer-manager-checkpoint.json').write_text(json.dumps(project,indent=2),encoding='utf8')
             await command('LAYER')
-            await fill(500,258,'QA_LAYER');await page.wait_for_timeout(250)
+            await fill(500,258,'QA_LAYER',require_change=False);await page.wait_for_timeout(250)
             await capture('37-layer-manager-filtered.png')
             await page.keyboard.press('Escape');await page.wait_for_timeout(200)
             errors=[e for e in events if e['type']=='pageerror' or '3D renderer error:' in e.get('text','')]
