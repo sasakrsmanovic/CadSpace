@@ -48,7 +48,7 @@ async def main():
                 'On': (645, 327, 686, 344), 'Lock': (696, 327, 743, 344),
                 'Linetype': (850, 327, 999, 344), 'Weight': (1008, 327, 1068, 344),
             }.items():
-                assert sum(max(pixel)<110 for pixel in row.crop(box).getdata())>4, f'Missing rendered {name} cells after trimming' 
+                assert sum(max(pixel)<110 for pixel in row.crop(box).getdata())>4, f'Missing rendered {name} cells after trimming'
             await page.keyboard.press('Escape');await page.wait_for_timeout(300)
             model_after = await capture('34-model-after-layer-manager.png')
             assert sum(sum(abs(a-b) for a,b in zip(x,y))>40 for x,y in zip(model_before.getdata(),model_after.getdata()))<15, 'Layer manager must not change the model camera or switch to 2D'
@@ -70,18 +70,39 @@ async def main():
             await capture('36-layer-manager-edited.png')
             await page.keyboard.press('Escape');await page.wait_for_timeout(200)
             await command('TOP','LINE','0,20','240,20','')
-            snapshot = await page.wait_for_function("""async () => {
-                for (const key of JSON.parse(await CadSpaceRecoveryStorage.list())) {
-                    const value = await CadSpaceRecoveryStorage.read(key);
-                    if (!value) continue;
-                    const split = value.indexOf('\\n');
-                    const project = JSON.parse(value.slice(split + 1)); const d = project.drawing;
-                    const l = d.layers.find(x => x.name === 'QA_LAYER');
-                    if (l && l.color === 0xFF12ABEF && l.weight === 0.5 && !d.layers.some(x => x.name === 'QA_TEMP') && d.entities.some(x => x.layer === 'QA_LAYER')) return project;
-                }
-                return false;
-            }""",timeout=20000,polling=250)
-            project = await snapshot.json_value()
+            # page.evaluate awaits the promise before returning its serialized value.
+            # Do not use wait_for_function with an async predicate: the Promise itself
+            # can satisfy its truthiness check before the checkpoint is committed.
+            project = None
+            deadline = asyncio.get_running_loop().time() + 20
+            last_checkpoints = []
+            while asyncio.get_running_loop().time() < deadline:
+                last_checkpoints = await page.evaluate("""async () => {
+                    const projects = [];
+                    for (const key of JSON.parse(await CadSpaceRecoveryStorage.list())) {
+                        const value = await CadSpaceRecoveryStorage.read(key);
+                        if (value) projects.push(JSON.parse(value.slice(value.indexOf('\\n') + 1)));
+                    }
+                    return projects;
+                }""")
+                assert isinstance(last_checkpoints, list), 'Checkpoint reads must return resolved data'
+                for candidate in last_checkpoints:
+                    assert isinstance(candidate, dict) and candidate.get('format') == 'CadSpace'
+                    drawing = candidate['drawing']
+                    layer = next((x for x in drawing['layers'] if x['name'] == 'QA_LAYER'), None)
+                    new_line = any(x['type'] == 'LINE' and x['layer'] == 'QA_LAYER' and
+                                   x['a'] == [0, 20, 0] and x['b'] == [240, 20, 0]
+                                   for x in drawing['entities'])
+                    if (layer and layer['color'] == 0xFF12ABEF and layer['weight'] == 0.5 and
+                            not any(x['name'] == 'QA_TEMP' for x in drawing['layers']) and
+                            drawing['linetypeScale'] == 2 and len(drawing['entities']) == 2 and new_line):
+                        project = candidate
+                        break
+                if project is not None:
+                    break
+                await page.wait_for_timeout(250)
+            (output/'layer-manager-checkpoints-observed.json').write_text(json.dumps(last_checkpoints, indent=2), encoding='utf8')
+            assert isinstance(project, dict), 'No committed native checkpoint contains the expected layer properties and line geometry'
             (output/'layer-manager-checkpoint.json').write_text(json.dumps(project,indent=2),encoding='utf8')
             await command('LAYER')
             await fill(500,258,'QA_LAYER');await page.wait_for_timeout(250)
