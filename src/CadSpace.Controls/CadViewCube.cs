@@ -72,7 +72,8 @@ public sealed class CadNavigationBar : Border
         { var b = CadUi.IconButton(icon, title, () => NavigationRequested?.Invoke(name), "navigation." + name, 27); _buttons.Add(name, b); body.Children.Add(b); }
         Child = body;
     }
-    public void SetMode(string mode) { foreach (var (name, b) in _buttons) b.Background = CadTheme.Brush(name == mode ? 0xFF2D6E9D : 0x00354252); }
+    private string? _mode;
+    public void SetMode(string mode) { if (_mode == mode) return; _mode = mode; foreach (var (name, b) in _buttons) b.Background = CadTheme.Brush(name == mode ? 0xFF2D6E9D : 0x00354252); }
 }
 
 public sealed class CadViewportControls : StackPanel

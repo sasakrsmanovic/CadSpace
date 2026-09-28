@@ -11,6 +11,12 @@ CadSpace is an independent C# CAD workspace built with Uno Platform, Skia and Op
 
 > **Development preview—not full AutoCAD parity.** Mesh modeling is not an analytic ACIS/B-rep kernel, and arbitrary DXF editing is not universally lossless. Preserve originals, review export warnings, and save native projects. Best-effort five-second recovery checkpoints do not replace saved files or backups.
 
+## Integrated CAD workspace
+
+The ribbon now includes large/split command buttons, compact tool columns, inline layer/color/linetype/lineweight selectors, dialog launchers and contextual selection tabs. The shell adds an application menu, Quick Access toolbar, command search, document overflow/reordering, true model/layout tabs, dockable/floating/auto-hide palettes, searchable Tool Palettes, camera-synchronized ViewCube, viewport menus and a vertical navigation bar. Workspace preferences are saved separately from drawings. Every visible tool routes to implemented behavior; this is not a claim of full AutoCAD/CUI compatibility.
+
+Read [controls, shortcuts, persistence and remaining UI boundaries](docs/WORKSPACE.md).
+
 ## Workspace
 
 The startup document is an editable studio floor plan. **3D example** opens a separate model study. The custom Uno workspace includes a dense, minimizable ribbon, document tabs, command completion/history, cursor-adjacent dynamic input, editable blue grips, Quick Select, overlap cycling, properties/layers/blocks, model/layout selection and 3D navigation.
@@ -26,7 +32,7 @@ The startup document is an editable studio floor plan. **3D example** opens a se
 | 3D viewing | Depth-tested shading, feature edges, picking/highlights, world-plane plain text, projection, uncapped clipping, pan/orbit and anchored zoom |
 | Files | ASCII/binary DXF and supported code pages; native MESH/SPLINE/HATCH/style output; original-record preservation; native projects and local recovery |
 
-The registry contains **66 command workflows**, not every option of their AutoCAD namesakes. Exact inputs and restrictions are in [Commands](docs/COMMANDS.md).
+The registry contains **76 command workflows**, not every option of their AutoCAD namesakes. Exact inputs and restrictions are in [Commands](docs/COMMANDS.md).
 
 ### Layer and linetype managers
 
@@ -155,7 +161,7 @@ dotnet run --project tests/CadSpace.Advanced.Tests -c Release
 dotnet run --project tests/CadSpace.Performance.Tests -c Release
 ```
 
-The five suites contain **306 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
+The five suites contain **327 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
 
 Current-main builds deploy to GitHub Pages and verify the served commit. Tagged releases run headless checks/audits and package desktop/browser/source distributions with checksums. NuGet.org publication, signing and notarization are not automatic.
 

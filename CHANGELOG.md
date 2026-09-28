@@ -1,5 +1,13 @@
 # Changelog
 
+## Integrated CAD workspace (unreleased)
+
+- Added reusable application menu, Quick Access, search, ribbon panels/split buttons/selectors, document/layout tabs and workspace options.
+- Integrated left/right/floating/auto-hide palette host and searchable Tool Palettes with existing commands and blocks.
+- Replaced navigation placeholders with synchronized, pickable ViewCube, view/style menus and pan/zoom/orbit controls; fixed top/bottom camera matrix singularity.
+- Added undoable layout/property operations, separate validated UI preference persistence, stable control diagnostics and browser interaction regressions.
+- Scope and remaining UI compatibility boundaries: docs/WORKSPACE.md.
+
 ## Unreleased — linetypes, layer management and selective tessellation
 
 Added simple signed dash/gap/dot linetypes, ByLayer/ByBlock resolution, per-object/global scales and polyline generation flags. ASCII/binary DXF and native projects retain modeled style data; source-backed complex definitions are preserved rather than invented. Spline dash phase now continues across tessellation, and 3D polyline flags survive native/DXF and sampled affine exports.

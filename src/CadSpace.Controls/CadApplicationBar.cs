@@ -62,7 +62,7 @@ public sealed class CadApplicationMenu : Button
         CadUi.Identify(this, "shell.application", "Application menu");
         var grid = new Grid(); grid.ColumnDefinitions.Add(new() { Width = new GridLength(175) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(280) });
         var actions = new StackPanel { Spacing = 5 };
-        foreach (var (command, label) in new[] { ("NEW", "New drawing"), ("OPEN", "Open…"), ("SAVE", "Save native project…"), ("EXPORT", "Export ASCII DXF…"), ("EXPORT_BINARY", "Export binary DXF…"), ("RECOVER", "Drawing recovery…"), ("OPTIONS", "Options…"), ("ABOUT", "About CadSpace") })
+        foreach (var (command, label) in new[] { ("NEW", "New drawing"), ("OPEN", "Open…"), ("SAVE", "Save native project…"), ("EXPORT", "Export ASCII DXF…"), ("EXPORT_BINARY", "Export binary DXF…"), ("RECOVER", "Drawing recovery…"), ("STUDIO", "Studio plan example"), ("MODEL", "3D example"), ("OPTIONS", "Options…"), ("ABOUT", "About CadSpace") })
         {
             var b = CadUi.TextButton(label, () => { _flyout.Hide(); CommandRequested?.Invoke(command); }, "application." + command);
             b.Height = 36; b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Left; actions.Children.Add(b);

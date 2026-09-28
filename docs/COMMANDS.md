@@ -67,7 +67,7 @@ See [line-editing details and boundaries](LINE-EDITING.md). Modification errors 
 | PERSPECTIVE | PERSPECTIVE | 1 perspective, 0 orthographic. |
 | CLIP3D | CLIP3D | x,y,z,nx,ny,nz or OFF; retains normal·(point-origin) <= 0, uncapped display only. |
 
-The complete registry has **66 commands**. EXPLODE handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
+The complete registry has **76 commands**. EXPLODE handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
 
 Tab accepts completion in an idle command box; F2 expands history, F12 toggles dynamic input, and Ctrl+1 toggles Properties. Snap options expose per-mode choices including line intersections/perpendiculars and circle/arc tangents. Browser shortcuts may take precedence.
 
@@ -115,3 +115,7 @@ Complex SHX/text/shape linetypes are retained as source-backed definitions with 
 Widths are geometry, not lineweight. Global width and outgoing segment start/end widths are editable in Properties; the segment editor uses one vertex index rather than creating controls for an entire large vertex array. Uniform transformations scale widths; reflection and reversal preserve the outgoing segment semantics. Wide EXPLODE is rejected rather than silently discarding width. Set width to zero explicitly before exploding.
 
 The current PEDIT workflow is preselection-based and does not include every AutoCAD subcommand. Wide strip rendering uses sampled curves and bevel joins; fills currently remain continuous despite assigned linetypes. See [native width support and rendering limits](WIDE-POLYLINES.md).
+
+## Workspace commands
+
+PROPERTIES / PROPERTIESCLOSE show/hide Properties; TOOLPALETTES (TP) / TOOLPALETTESCLOSE show/hide tools; RIBBON / RIBBONCLOSE expand/minimize the ribbon; CLEANSCREENON / CLEANSCREENOFF hide/restore workspace chrome; OPTIONS (OP) opens workspace settings. UISTATS reports read-only control bounds and view state. See [Workspace controls](WORKSPACE.md).

@@ -37,7 +37,7 @@ public static class ViewCubeGeometry
             var s = GeometryMath.Cross2(delta, v) / det; var t = GeometryMath.Cross2(u, delta) / det;
             if (s < 0 || s > 1 || t < 0 || t > 1) continue;
             var n = face.Normal + face.U * (s < .22 ? -1 : s > .78 ? 1 : 0) + face.V * (t < .22 ? -1 : t > .78 ? 1 : 0);
-            return new(GeometryMath.Degrees(Math.Atan2(n.Y, n.X)), GeometryMath.Degrees(Math.Asin(n.Normalized.Z)));
+            return new(n.X == 0 && n.Y == 0 ? -90 : GeometryMath.Degrees(Math.Atan2(n.Y, n.X)), GeometryMath.Degrees(Math.Asin(n.Normalized.Z)));
         }
         return null;
     }

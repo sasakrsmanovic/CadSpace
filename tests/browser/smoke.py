@@ -2,15 +2,21 @@
 import asyncio,json,os,re
 from pathlib import Path
 from playwright.async_api import async_playwright
-from PIL import Image
-from ui_helpers import click as click_ui
+from PIL import Image, ImageDraw
+from ui_helpers import click as click_ui, bounds as ui_bounds
 
 ROI=(200,240,1120,760)
 def crop(path):return Image.open(path).convert('RGB').crop(ROI)
 def filled(image):return sum(min(r,g,b)>75 and max(r,g,b)-min(r,g,b)<55 for r,g,b in image.getdata())
-def blue_bounds(path):
+def blue_bounds(path, controls):
     image=Image.open(path).convert('RGB').crop((0,190,1323,850))
     mask=Image.new('L',image.size);mask.putdata([255 if b-r>50 and b-g>20 and b>120 else 0 for r,g,b in image.getdata()])
+    # Navigation icons share the highlight palette; exclude their actual UI bounds,
+    # never the drawing or the selected geometry being verified.
+    draw=ImageDraw.Draw(mask)
+    for name,(x,y,w,h) in controls.items():
+        if name.startswith('navigation.') or name.startswith('viewport.'):
+            draw.rectangle((x-1,y-191,x+w+1,y+h-189),fill=0)
     box=mask.getbbox();assert box is not None,'Expected editable blue grips'
     return (box[0],box[1]+190,box[2],box[3]+190)
 
@@ -73,7 +79,7 @@ async def main():
             # A simple known document makes exact grip coordinates and undo pixels observable.
             await page.keyboard.press('Control+n');await page.wait_for_timeout(300)
             await command('LINE','0,0','200,0','','CIRCLE','50,50','15','ZOOM','QSELECT','LINE,*,Replace,All')
-            original=await shot('15-editable-grips.png');box=blue_bounds(output/'15-editable-grips.png')
+            original=await shot('15-editable-grips.png');box=blue_bounds(output/'15-editable-grips.png',await ui_bounds(page,events))
             end=(box[2]-4,(box[1]+box[3])/2);assert box[2]-box[0]>800 and box[3]-box[1]>=6,box
             static_before=await render_stats()
             for i in range(20):await page.mouse.move(420+i*12,350+(i%4)*4);await page.wait_for_timeout(20)
