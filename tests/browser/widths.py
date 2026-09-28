@@ -3,7 +3,8 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw
+from ui_helpers import bounds
 from playwright.async_api import async_playwright
 
 async def main():
@@ -20,9 +21,17 @@ async def main():
                 await page.keyboard.type(value); await page.keyboard.press('Enter')
             await page.wait_for_timeout(450)
         async def shot(name):
+            positions = await bounds(page, events)
             await page.mouse.move(300,956)
             await page.screenshot(path=str(output/name),full_page=True)
-            image=Image.open(output/name).convert('RGB').crop((200,260,1120,750))
+            image = Image.open(output/name).convert('RGB')
+            # Mask actual navigation controls so their icons cannot satisfy the geometry assertion.
+            mask = ImageDraw.Draw(image)
+            for key, (x,y,w,h) in positions.items():
+                if key.startswith('navigation.') or key.startswith('viewport.') and key != 'viewport.surface':
+                    mask.rectangle((x-3,y-3,x+w+3,y+h+3), fill=(0,0,0))
+            x,y,w,h = positions['viewport.surface']
+            image = image.crop((int(x+4),int(y+42),int(x+w-4),int(y+h-34)))
             return sum(min(px)>75 and max(px)-min(px)<65 for px in image.getdata())
         try:
             await page.goto(os.environ.get('CADSPACE_URL','http://127.0.0.1:8177/CadSpace/'),wait_until='domcontentloaded')

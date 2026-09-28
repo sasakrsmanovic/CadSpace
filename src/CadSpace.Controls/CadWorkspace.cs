@@ -1,155 +1,225 @@
+using System.Collections.Immutable;
+using System.Text;
+using System.Text.Json;
 using CadSpace.Engine;
+using CadSpace.Model;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Windows.System;
 
 namespace CadSpace.Controls;
 
-public sealed class CadDocumentTabs : UserControl
-{
-    private readonly StackPanel _tabs = new() { Orientation = Orientation.Horizontal, Spacing = 1 };
-    public event Action<object>? ActivateRequested;
-    public event Action<object>? CloseRequested;
-    public event Action? NewRequested;
-    public CadDocumentTabs() => Content = new ScrollViewer { Content = _tabs, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Background = CadTheme.Brush(0xFF20262F) };
-    public void SetDocuments(IEnumerable<(object Key, string Name, bool Dirty)> documents, object active)
-    {
-        _tabs.Children.Clear();
-        foreach (var document in documents)
-        {
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            var title = CadTheme.Button(document.Name + (document.Dirty ? " *" : ""), () => ActivateRequested?.Invoke(document.Key)); title.Background = CadTheme.Brush(Equals(document.Key, active) ? 0xFF414C5B : 0xFF29313B); title.Padding = new Thickness(18, 5, 12, 5); row.Children.Add(title);
-            var close = CadTheme.Button("×", () => CloseRequested?.Invoke(document.Key)); close.Background = title.Background; close.MinWidth = 23; close.Padding = new Thickness(5, 3, 5, 3); row.Children.Add(close); _tabs.Children.Add(row);
-        }
-        _tabs.Children.Add(CadTheme.Button("+", () => NewRequested?.Invoke(), 34));
-    }
-}
-
-public sealed class CadStatusBar : UserControl
-{
-    private readonly StackPanel _toggles = new() { Orientation = Orientation.Horizontal, Spacing = 1 };
-    private readonly TextBlock _coordinates = CadTheme.Text("0.000, 0.000, 0.000", 10, CadTheme.Muted);
-    private CadSession? _session;
-    public CadStatusBar()
-    {
-        var root = new Grid { Background = CadTheme.Brush(0xFF202630) }; root.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); root.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        _coordinates.Margin = new Thickness(12, 0, 12, 0); root.Children.Add(_coordinates); Grid.SetColumn(_toggles, 1); root.Children.Add(_toggles); Content = root;
-    }
-    public void Bind(CadSession session) { _session = session; Refresh(); }
-    public void SetCoordinates(CadSpace.Geometry.Vec3 point) => _coordinates.Text = FormattableString.Invariant($"{point.X:0.000}, {point.Y:0.000}, {point.Z:0.000}     |     {_session?.ActiveLayout ?? "Model"}");
-    public void Toggle(string name)
-    {
-        if (_session == null) return;
-        switch (name) { case "GRID": _session.GridVisible = !_session.GridVisible; break; case "SNAP": _session.GridSnap = !_session.GridSnap; break; case "ORTHO": _session.Ortho = !_session.Ortho; break; case "POLAR": _session.Polar = !_session.Polar; break; case "OSNAP": _session.ObjectSnap = !_session.ObjectSnap; break; case "SC": _session.SelectionCycling = !_session.SelectionCycling; break; case "DYN": _session.DynamicInput=!_session.DynamicInput; break; }
-        _session.Invalidate(); Refresh();
-    }
-    private void Refresh()
-    {
-        if (_session == null) return; _toggles.Children.Clear();
-        foreach (var (name, state) in new[] { ("GRID", _session.GridVisible), ("SNAP", _session.GridSnap), ("ORTHO", _session.Ortho), ("POLAR", _session.Polar), ("OSNAP", _session.ObjectSnap), ("DYN", _session.DynamicInput), ("SC", _session.SelectionCycling) })
-        {
-            var button = CadTheme.Button(name, () => Toggle(name)); button.FontSize = 10; button.MinHeight = 25; button.Padding = new Thickness(8, 2, 8, 2); button.Background = CadTheme.Brush(state ? 0xFF345B7B : 0xFF29323D); _toggles.Children.Add(button);
-        }
-        var options = CadTheme.Button("Snap options", () => { });
-        var menu = new MenuFlyout();
-        foreach (var mode in new[] { ObjectSnapModes.Endpoint, ObjectSnapModes.Midpoint, ObjectSnapModes.Center, ObjectSnapModes.Quadrant, ObjectSnapModes.Intersection, ObjectSnapModes.Perpendicular, ObjectSnapModes.Tangent, ObjectSnapModes.Nearest })
-        {
-            var item = new ToggleMenuFlyoutItem { Text = mode.ToString(), IsChecked = (_session.SnapModes & mode) != 0 };
-            item.Click += (_, _) => { if (_session == null) return; if (item.IsChecked) _session.SnapModes |= mode; else _session.SnapModes &= ~mode; _session.Invalidate(); };
-            menu.Items.Add(item);
-        }
-        options.Flyout = menu; _toggles.Children.Add(options);
-        _toggles.Children.Add(CadTheme.Text("  WCS  ", 10, CadTheme.Muted));
-    }
-}
-
-/// <summary>Composable CAD shell. File persistence and document ownership remain with the hosting app.</summary>
+/// <summary>Composable CAD workspace. All UI entry points share command/document/selection state.</summary>
 public sealed partial class CadWorkspace : UserControl
 {
+    public CadApplicationBar ApplicationBar { get; } = new();
     public CadRibbon Ribbon { get; } = new();
+    public CadMenuBar MenuBar { get; } = new() { Visibility = Visibility.Collapsed };
     public CadViewport Viewport { get; } = new();
     public CadCommandLine CommandLine { get; } = new();
     public CadPalette Palette { get; } = new();
+    public CadToolPalette ToolPalette { get; } = new();
     public CadDocumentTabs DocumentTabs { get; } = new();
     public CadStatusBar StatusBar { get; } = new();
+    public CadLayoutTabs LayoutTabs { get; } = new();
+    public CadDockHost DockHost { get; }
     public event Action<string>? FileRequested;
-    private CommandEngine? _commands;
-    private CadSession? _session;
-    private readonly ComboBox _layoutSelector = new() { MinWidth = 100, MinHeight = 25, FontSize = 10 };
-    private bool _updatingLayouts;
-    private CadSpace.Model.Drawing? _layoutDrawing;
-    private string _lastLayout = "";
-    private readonly TextBlock _title = CadTheme.Text("CadSpace  —  Drafting & Modeling", 12);
-    private readonly ColumnDefinition _paletteColumn = new() { Width = new GridLength(272) };
-    private double _paletteWidth = 272;
-    private bool _paletteVisible=true;
-    private void ApplyPaletteVisibility(){var visible=_paletteVisible && ActualWidth>=850;_paletteColumn.Width=new GridLength(visible?_paletteWidth:0);Palette.Visibility=visible?Visibility.Visible:Visibility.Collapsed;}
+    public event Action<WorkspaceLayout>? PreferencesChanged;
+    private CommandEngine? _commands; private CadSession? _session;
+    private readonly Grid _root = CadTheme.Grid(34, 120, 30, -1, 78, 27);
+    private string _workspaceName = WorkspaceLayout.Presets[0];
+    private bool _cleanScreen, _menuBarVisible, _restoring, _optionsDialog;
+    private Action? _cancelConsoleResize;
+    private Drawing? _selectionDrawing; private long _selectionRevision = -1;
     public CadWorkspace()
     {
-        RequestedTheme = ElementTheme.Dark;
-        var root = CadTheme.Grid(34, 120, 30, -1, 27, 74, 27); root.Background = CadTheme.Brush(CadTheme.Background);
-        var titlebar = new Grid { Background = CadTheme.Brush(0xFF20252D) }; titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titlebar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); titlebar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var quick = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3 };
-        var brand = CadTheme.Text("CS", 17, 0xFFFFFFFF); brand.Margin = new Thickness(11, 0, 11, 0); quick.Children.Add(CadTheme.Box(brand, 0xFFB44547));
-        foreach (var (label, command) in new[] { ("New", "NEW"), ("Open", "OPEN"), ("Save", "SAVE"), ("Export DXF", "EXPORT"), ("Binary DXF", "EXPORT_BINARY") }) quick.Children.Add(CadTheme.Button(label, () => FileRequested?.Invoke(command)));
-        quick.Children.Add(CadTheme.Button("↶", () => _commands?.Start("UNDO"))); quick.Children.Add(CadTheme.Button("↷", () => _commands?.Start("REDO")));
-        titlebar.Children.Add(quick); _title.HorizontalAlignment = HorizontalAlignment.Center; Grid.SetColumn(_title, 1); titlebar.Children.Add(_title);
-        var extras = new StackPanel { Orientation = Orientation.Horizontal }; extras.Children.Add(CadTheme.Button("Studio plan", () => FileRequested?.Invoke("STUDIO"))); extras.Children.Add(CadTheme.Button("3D example", () => FileRequested?.Invoke("MODEL"))); extras.Children.Add(CadTheme.Button("Properties",()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();})); extras.Children.Add(CadTheme.Button("Recover", () => FileRequested?.Invoke("RECOVER"))); extras.Children.Add(CadTheme.Button("About", () => FileRequested?.Invoke("ABOUT"))); Grid.SetColumn(extras, 2); titlebar.Children.Add(extras);
-        CadTheme.At(root, titlebar, 0); CadTheme.At(root, Ribbon, 1); CadTheme.At(root, DocumentTabs, 2);
-        var area = new Grid(); area.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); area.ColumnDefinitions.Add(new() { Width = new GridLength(5) }); area.ColumnDefinitions.Add(_paletteColumn);
-        area.Children.Add(Viewport); Grid.SetColumn(Palette, 2); area.Children.Add(Palette);
-        var splitter = new Border { Background = CadTheme.Brush(CadTheme.Edge) }; Grid.SetColumn(splitter, 1); area.Children.Add(splitter); var dragging = false; double previousX = 0;
-        splitter.PointerPressed += (_, e) => { dragging = true; previousX = e.GetCurrentPoint(root).Position.X; splitter.CapturePointer(e.Pointer); e.Handled = true; };
-        splitter.PointerMoved += (_, e) => { if (!dragging) return; var x = e.GetCurrentPoint(root).Position.X; _paletteWidth = Math.Clamp(_paletteWidth + previousX - x, 245, 520); _paletteColumn.Width = new GridLength(_paletteWidth); previousX = x; };
-        splitter.PointerReleased += (_, e) => { dragging = false; splitter.ReleasePointerCapture(e.Pointer); }; splitter.PointerCaptureLost += (_, _) => dragging = false;
-        CadTheme.At(root, area, 3);
-        var modelbar = new StackPanel { Orientation = Orientation.Horizontal, Background = CadTheme.Brush(0xFF252C36), Spacing = 4 }; modelbar.Children.Add(CadTheme.Button("MODEL", () => { if (_session != null) _session.ActiveLayout = "Model"; Viewport.Set3D(false); Viewport.Fit(); })); modelbar.Children.Add(CadTheme.Button("3D VIEW", () => Viewport.Set3D(true))); modelbar.Children.Add(_layoutSelector);
-        _layoutSelector.SelectionChanged += (_, _) => { if (!_updatingLayouts && _session != null && _layoutSelector.SelectedItem is string layout) { _commands?.Cancel(); _session.ActiveLayout = layout; Viewport.Fit(); } }; CadTheme.At(root, modelbar, 4);
-        Ribbon.MinimizedChanged+=minimized=>root.RowDefinitions[1].Height=new GridLength(minimized?28:120);
-        CommandLine.CancelRequested += Viewport.CancelInteraction;
-        CommandLine.HistoryExpanded+=expanded=>root.RowDefinitions[5].Height=new GridLength(expanded?202:74);
+        CadUi.Identify(Viewport, "viewport.surface", "CAD drawing viewport");
+        RequestedTheme = ElementTheme.Dark; _root.Background = CadTheme.Brush(CadTheme.Background);
+        DockHost = new(Viewport); DockHost.AddPane("properties", "Properties", Palette, new("properties")); DockHost.AddPane("tools", "Tool Palettes", ToolPalette, new("tools", PaletteDock.Left, false));
+        var header = new StackPanel(); header.Children.Add(ApplicationBar); header.Children.Add(MenuBar);
+        CadTheme.At(_root, header, 0); CadTheme.At(_root, Ribbon, 1); CadTheme.At(_root, DocumentTabs, 2); CadTheme.At(_root, DockHost, 3);
+        var console = CadTheme.Grid(4, -1); var resize = new Border { Background = CadTheme.Brush(CadTheme.Edge) }; CadUi.Identify(resize, "command.resize", "Resize command window");
+        CadTheme.At(console, resize, 0); CadTheme.At(console, CommandLine, 1); CadTheme.At(_root, console, 4);
+        bool dragging = false; double start = 0, height = 0;
+        resize.PointerPressed += (_, e) => { if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return; CancelShellInteraction(); dragging = true; start = e.GetCurrentPoint(this).Position.Y; height = CommandLine.PanelHeight;
+            _cancelConsoleResize = () => { dragging = false; CommandLine.ResizeTo(height); resize.ReleasePointerCaptures(); }; resize.CapturePointer(e.Pointer); e.Handled = true; };
+        resize.PointerMoved += (_, e) => { if (dragging) CommandLine.ResizeTo(Math.Clamp(height + start - e.GetCurrentPoint(this).Position.Y, 74, 350)); };
+        resize.PointerReleased += (_, e) => { if (!dragging) return; dragging = false; _cancelConsoleResize = null; resize.ReleasePointerCapture(e.Pointer); NotifyPreferences(); e.Handled = true; };
+        resize.PointerCaptureLost += (_, _) => { if (!dragging) return; dragging = false; _cancelConsoleResize = null; CommandLine.ResizeTo(height); };
+        CommandLine.HeightChanged += h => { _root.RowDefinitions[4].Height = new GridLength(h + 4); if (!dragging) NotifyPreferences(); };
+        var bottom = new Grid(); bottom.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); bottom.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        bottom.Children.Add(LayoutTabs); Grid.SetColumn(StatusBar, 1); bottom.Children.Add(StatusBar); CadTheme.At(_root, bottom, 5); Content = _root;
+        CadUi.Identify(CommandLine.Input, "command.input", "CAD command input");
+        MenuBar.CommandRequested += Invoke; ApplicationBar.CommandRequested += Invoke; Ribbon.CommandRequested += Invoke; ToolPalette.CommandRequested += Invoke;
+        Ribbon.Message += CommandLine.AddMessage; ToolPalette.InsertRequested += Insert; Palette.InsertRequested += Insert;
+        Palette.Message += CommandLine.AddMessage; Viewport.Message += CommandLine.AddMessage; Viewport.CoordinatesChanged += StatusBar.SetCoordinates;
+        DocumentTabs.NewRequested += () => Invoke("NEW");
+        DocumentTabs.DocumentsChanged += () => ApplicationBar.ApplicationMenu.SetDocuments(DocumentTabs.Documents);
+        ApplicationBar.ApplicationMenu.ActivateRequested += key => DocumentTabs.RequestActivation(key);
+        LayoutTabs.LayoutActivated += () => { Viewport.CancelInteraction(); _commands?.Cancel(); Viewport.Set3D(false); Viewport.Fit(); };
+        LayoutTabs.RenameRequested += RenameLayout; LayoutTabs.Message += CommandLine.AddMessage;
+        StatusBar.WorkspaceRequested += SetWorkspace; StatusBar.OptionsRequested += ShowOptions; StatusBar.CustomizationChanged += NotifyPreferences;
+        DockHost.LayoutChanged += NotifyPreferences;
+        Ribbon.MinimizedChanged += _ => { ApplyChrome(); NotifyPreferences(); };
+        CommandLine.CancelRequested += CancelShellInteraction;
+        AddShortcut(VirtualKey.N, VirtualKeyModifiers.Control, () => Invoke("NEW")); AddShortcut(VirtualKey.O, VirtualKeyModifiers.Control, () => Invoke("OPEN")); AddShortcut(VirtualKey.S, VirtualKeyModifiers.Control, () => Invoke("SAVE"));
+        AddShortcut(VirtualKey.E, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => Invoke("EXPORT")); AddShortcut(VirtualKey.R, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => Invoke("RECOVER"));
+        AddShortcut(VirtualKey.Z, VirtualKeyModifiers.Control, () => Invoke("UNDO"), true); AddShortcut(VirtualKey.Y, VirtualKeyModifiers.Control, () => Invoke("REDO"), true); AddShortcut(VirtualKey.A, VirtualKeyModifiers.Control, () => Invoke("SELECTALL"), true);
+        AddShortcut(VirtualKey.Delete, VirtualKeyModifiers.None, () => { if (_session?.Selection.Count > 0) Invoke("ERASE"); }, true);
+        AddShortcut(VirtualKey.Number1, VirtualKeyModifiers.Control, () => DockHost.Toggle("properties")); AddShortcut(VirtualKey.Number3, VirtualKeyModifiers.Control, () => DockHost.Toggle("tools"));
+        AddShortcut(VirtualKey.Number0, VirtualKeyModifiers.Control, () => { _cleanScreen = !_cleanScreen; ApplyChrome(); NotifyPreferences(); });
+        AddShortcut(VirtualKey.F2, VirtualKeyModifiers.None, CommandLine.ToggleHistory); AddShortcut(VirtualKey.F6, VirtualKeyModifiers.None, CommandLine.FocusInput);
+        AddShortcut(VirtualKey.K, VirtualKeyModifiers.Control, () => ApplicationBar.Search.Focus(FocusState.Programmatic));
+        AddShortcut(VirtualKey.F3, VirtualKeyModifiers.None, () => StatusBar.Toggle("OSNAP")); AddShortcut(VirtualKey.F7, VirtualKeyModifiers.None, () => StatusBar.Toggle("GRID")); AddShortcut(VirtualKey.F8, VirtualKeyModifiers.None, () => StatusBar.Toggle("ORTHO"));
+        AddShortcut(VirtualKey.F9, VirtualKeyModifiers.None, () => StatusBar.Toggle("SNAP")); AddShortcut(VirtualKey.F10, VirtualKeyModifiers.None, () => StatusBar.Toggle("POLAR")); AddShortcut(VirtualKey.F12, VirtualKeyModifiers.None, () => StatusBar.Toggle("DYN"));
         AddShortcut(VirtualKey.W, VirtualKeyModifiers.Control, () => StatusBar.Toggle("SC"), true);
-        AddShortcut(VirtualKey.F2,VirtualKeyModifiers.None,CommandLine.ToggleHistory);
-        AddShortcut(VirtualKey.F12,VirtualKeyModifiers.None,()=>StatusBar.Toggle("DYN"));
-        AddShortcut(VirtualKey.Number1,VirtualKeyModifiers.Control,()=>{_paletteVisible=!_paletteVisible;ApplyPaletteVisibility();});
-        CadTheme.At(root, CommandLine, 5); CadTheme.At(root, StatusBar, 6); Content = root;
-        Ribbon.CommandRequested += command => { if (_commands == null) return; if (command == "QSELECT") { ShowQuickSelect(); return; } if (command is not ("TOP" or "3DORBIT" or "ZOOM" or "UNDO" or "REDO" or "HELP" or "RENDERSTATS" or "SELECTSIMILAR" or "LAYER" or "LINETYPE")) Viewport.Set3D(false); _commands.Start(command); CommandLine.FocusInput(); };
-        Viewport.CoordinatesChanged += StatusBar.SetCoordinates; Viewport.Message += CommandLine.AddMessage; Palette.Message += CommandLine.AddMessage;
-        Palette.InsertRequested += name => { Viewport.Set3D(false); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); };
-        DocumentTabs.NewRequested += () => FileRequested?.Invoke("NEW");
-        AddShortcut(VirtualKey.N, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("NEW")); AddShortcut(VirtualKey.O, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("OPEN")); AddShortcut(VirtualKey.S, VirtualKeyModifiers.Control, () => FileRequested?.Invoke("SAVE")); AddShortcut(VirtualKey.E, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => FileRequested?.Invoke("EXPORT"));
-        AddShortcut(VirtualKey.Z, VirtualKeyModifiers.Control, () => _commands?.Start("UNDO"), true); AddShortcut(VirtualKey.Y, VirtualKeyModifiers.Control, () => _commands?.Start("REDO"), true); AddShortcut(VirtualKey.A, VirtualKeyModifiers.Control, () => _commands?.Start("SELECTALL"), true);
-        AddShortcut(VirtualKey.Delete, VirtualKeyModifiers.None, () => { if (_commands?.Session.Selection.Count > 0) _commands.Start("ERASE"); }, true);
-        AddShortcut(VirtualKey.F3, VirtualKeyModifiers.None, () => StatusBar.Toggle("OSNAP")); AddShortcut(VirtualKey.F7, VirtualKeyModifiers.None, () => StatusBar.Toggle("GRID")); AddShortcut(VirtualKey.F8, VirtualKeyModifiers.None, () => StatusBar.Toggle("ORTHO")); AddShortcut(VirtualKey.F9, VirtualKeyModifiers.None, () => StatusBar.Toggle("SNAP")); AddShortcut(VirtualKey.F10, VirtualKeyModifiers.None, () => StatusBar.Toggle("POLAR"));
-        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { Viewport.CancelInteraction(); _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
-        SizeChanged += (_, _) => { ApplyPaletteVisibility(); _title.Visibility = ActualWidth < 1200 ? Visibility.Collapsed : Visibility.Visible; };
+        AddShortcut(VirtualKey.F12, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => DispatcherQueue.TryEnqueue(ReportUiBounds));
+        KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape) { CancelShellInteraction(); _commands?.Cancel(); CommandLine.Input.Text = ""; e.Handled = true; } };
+    }
+    public void CancelShellInteraction()
+    {
+        var cancel = _cancelConsoleResize; _cancelConsoleResize = null; cancel?.Invoke();
+        DockHost.CancelInteraction(); DockHost.DismissPeek(); Viewport.CancelInteraction();
+    }
+    public void Invoke(string command)
+    {
+        if (_commands == null) return;
+        try
+        {
+            if (command is "NEW" or "OPEN" or "SAVE" or "EXPORT" or "EXPORT_BINARY" or "RECOVER" or "ABOUT" or "STUDIO" or "MODEL") { FileRequested?.Invoke(command); return; }
+            if (command == "LAYOUT_NEW") { LayoutTabs.NewLayout(); return; }
+            if (command == "LAYOUT_RENAME") { RenameLayout(_session!.ActiveLayout); return; }
+            if (command == "LAYOUT_DELETE") { LayoutTabs.DeleteLayout(); return; }
+            if (command == "QSELECT") { ShowQuickSelect(); return; }
+            Viewport.CancelInteraction(); _commands.Start(command); CommandLine.FocusInput();
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or NotSupportedException) { CommandLine.AddMessage(e.Message); }
+    }
+    private void Insert(string name) { Viewport.CancelInteraction(); _commands?.Start("INSERT"); _commands?.Submit(name); CommandLine.FocusInput(); }
+    private void OnShellRequested(string command)
+    {
+        if (command is "MENUBAR:0" or "MENUBAR:1") { _menuBarVisible = command.EndsWith('1'); ApplyChrome(); NotifyPreferences(); return; }
+        switch (command)
+        {
+            case "PROPERTIES": DockHost.SetVisible("properties", true); break;
+            case "PROPERTIESCLOSE": DockHost.SetVisible("properties", false); break;
+            case "TOOLPALETTES": DockHost.SetVisible("tools", true); break;
+            case "TOOLPALETTESCLOSE": DockHost.SetVisible("tools", false); break;
+            case "RIBBON": Ribbon.SetMinimized(false); break;
+            case "RIBBONCLOSE": Ribbon.SetMinimized(true); break;
+            case "CLEANSCREENON": _cleanScreen = true; ApplyChrome(); NotifyPreferences(); break;
+            case "CLEANSCREENOFF": _cleanScreen = false; ApplyChrome(); NotifyPreferences(); break;
+            case "OPTIONS": ShowOptions(); break;
+            case "UISTATS": DispatcherQueue.TryEnqueue(ReportUiBounds); break;
+        }
+    }
+    private void ApplyChrome()
+    {
+        MenuBar.Visibility = _menuBarVisible && !_cleanScreen ? Visibility.Visible : Visibility.Collapsed;
+        _root.RowDefinitions[0].Height = new GridLength(MenuBar.Visibility == Visibility.Visible ? 59 : 34);
+        Ribbon.Visibility = _cleanScreen ? Visibility.Collapsed : Visibility.Visible;
+        _root.RowDefinitions[1].Height = new GridLength(_cleanScreen ? 0 : Ribbon.IsMinimized ? 28 : 120); DockHost.Suspend(_cleanScreen);
+    }
+    public WorkspaceLayout CapturePreferences() => new() { Workspace = _workspaceName, RibbonMinimized = Ribbon.IsMinimized, CleanScreen = _cleanScreen,
+        MenuBarVisible = _menuBarVisible, ViewCubeVisible = Viewport.ViewCubeVisible, NavigationBarVisible = Viewport.NavigationBarVisible,
+        CommandHeight = CommandLine.PanelHeight, HiddenStatusItems = StatusBar.HiddenItems, Palettes = DockHost.Capture() };
+    public void RestorePreferences(WorkspaceLayout layout, bool restoreView = true)
+    {
+        WorkspaceLayout.Validate(layout); _restoring = true;
+        try { CancelShellInteraction(); _menuBarVisible = layout.MenuBarVisible; Viewport.SetNavigationVisibility(layout.ViewCubeVisible, layout.NavigationBarVisible);
+            CommandLine.ResizeTo(layout.CommandHeight); StatusBar.SetHiddenItems(layout.HiddenStatusItems); _workspaceName = layout.Workspace; StatusBar.SetWorkspace(_workspaceName); Ribbon.Show(_workspaceName == WorkspaceLayout.Presets[0] ? "Home" : "3D Modeling"); Ribbon.SetMinimized(layout.RibbonMinimized); DockHost.Restore(layout.Palettes); if (restoreView) Viewport.Set3D(_workspaceName != WorkspaceLayout.Presets[0]); _cleanScreen = layout.CleanScreen; ApplyChrome(); }
+        finally { _restoring = false; }
+    }
+    private void NotifyPreferences() { if (!_restoring) PreferencesChanged?.Invoke(CapturePreferences()); }
+    private void SetWorkspace(string name)
+    {
+        if (!WorkspaceLayout.Presets.Contains(name)) return;
+        _workspaceName = name; StatusBar.SetWorkspace(name); Ribbon.Show(name == WorkspaceLayout.Presets[0] ? "Home" : "3D Modeling");
+        Viewport.CancelInteraction(); _commands?.Cancel(); Viewport.Set3D(name != WorkspaceLayout.Presets[0]);
+        if (name == WorkspaceLayout.Presets[2]) DockHost.SetVisible("tools", true);
+        NotifyPreferences();
+    }
+    private async void ShowOptions()
+    {
+        if (_optionsDialog || _styleDialog || _selectionDialog || XamlRoot == null) return; _optionsDialog = true;
+        try
+        {
+            var options = new CadWorkspaceOptions(CapturePreferences()); WorkspaceLayout? chosen = null;
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Options", Content = options, PrimaryButtonText = "Apply", SecondaryButtonText = "Reset workspace", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+            dialog.Resources["ContentDialogMaxWidth"] = 700.0; CadUi.DescribeDialog(dialog, "options.dialog");
+            dialog.PrimaryButtonClick += (_, e) => { try { chosen = options.Capture(); } catch (ArgumentException error) { options.ShowError(error.Message); e.Cancel = true; } };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Secondary) { RestorePreferences(WorkspaceLayout.Default); NotifyPreferences(); }
+            else if (result == ContentDialogResult.Primary && chosen != null) { RestorePreferences(chosen, chosen.Workspace != _workspaceName); NotifyPreferences(); }
+        }
+        catch (Exception e) { CommandLine.AddMessage(e.Message); }
+        finally { _optionsDialog = false; }
+    }
+    private async void RenameLayout(string name)
+    {
+        if (_optionsDialog || _styleDialog || _selectionDialog || _session == null || XamlRoot == null) return;
+        var session = _session; if (name == "Model") { CommandLine.AddMessage("Model cannot be renamed."); return; } _optionsDialog = true;
+        try
+        {
+            var input = new TextBox { Header = "Layout name", Text = name, MinWidth = 320 }; CadUi.Identify(input, "layout.renameInput", "Layout name");
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Rename layout", Content = input, PrimaryButtonText = "Rename", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary && ReferenceEquals(session, _session)) session.RenameLayout(name, input.Text.Trim());
+        }
+        catch (Exception e) { CommandLine.AddMessage(e.Message); }
+        finally { _optionsDialog = false; }
     }
     private void AddShortcut(VirtualKey key, VirtualKeyModifiers modifiers, Action action, bool preserveTextEditing = false)
     {
         var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
-        accelerator.Invoked += (_, e) =>
-        {
+        accelerator.Invoked += (_, e) => {
             if (preserveTextEditing && XamlRoot != null && FocusManager.GetFocusedElement(XamlRoot) is TextBox text && (text != CommandLine.Input || text.Text.Length != 0)) return;
             action(); e.Handled = true;
-        };
-        KeyboardAccelerators.Add(accelerator);
+        }; KeyboardAccelerators.Add(accelerator);
     }
-    private void RefreshLayouts()
+    private void SelectionChanged()
     {
-        if (_session == null || _updatingLayouts) return;
-        if (ReferenceEquals(_layoutDrawing, _session.Document.Drawing) && _lastLayout == _session.ActiveLayout) return;
-        _layoutDrawing = _session.Document.Drawing; _lastLayout = _session.ActiveLayout; _updatingLayouts = true;
-        try { var names = _session.AvailableLayouts.ToArray(); if (_layoutSelector.ItemsSource is not string[] previous || !previous.SequenceEqual(names)) _layoutSelector.ItemsSource = names; _layoutSelector.SelectedItem = _session.ActiveLayout; }
-        finally { _updatingLayouts = false; }
+        if (_session == null || ReferenceEquals(_selectionDrawing, _session.Document.Drawing) && _selectionRevision == _session.SelectionRevision) return;
+        _selectionDrawing = _session.Document.Drawing; _selectionRevision = _session.SelectionRevision; var selected = _session.SelectedEntities();
+        Ribbon.SetContext(selected.Length == 0 ? "" : selected.All(e => e is PolylineEntity or PlacedEntity { Geometry: PolylineEntity }) ? "Polyline" : selected.All(e => e is MeshEntity) ? "Mesh" : "Selection");
     }
-    public void SetTitle(string name) => _title.Text = name + "  —  CadSpace";
+    public void SetTitle(string name) => ApplicationBar.SetTitle(name + (_session?.Document.IsDirty == true ? " *" : ""));
     public void Bind(CadSession session, CommandEngine commands)
     {
-        if (_session != null) _session.Changed -= RefreshLayouts;
-        _session = session; _layoutDrawing = null; _session.Changed += RefreshLayouts; RefreshLayouts();
-        if (_commands != null) _commands.ViewRequested -= OnStyleRequested;
-        commands.ViewRequested += OnStyleRequested;
-        _commands = commands; Viewport.Bind(session, commands); Palette.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session); SetTitle(session.Document.Drawing.Name);
+        if (_session != null) _session.Changed -= SelectionChanged;
+        if (_commands != null) { _commands.ViewRequested -= OnStyleRequested; _commands.ViewRequested -= OnShellRequested; }
+        _session = session; _commands = commands; commands.ViewRequested += OnStyleRequested; commands.ViewRequested += OnShellRequested;
+        Viewport.Bind(session, commands); Palette.Bind(session); ToolPalette.Bind(session); Ribbon.Bind(session); LayoutTabs.Bind(session); CommandLine.Bind(commands); StatusBar.Bind(session);
+        _selectionDrawing = null; session.Changed += SelectionChanged; SelectionChanged(); SetTitle(session.Document.Drawing.Name);
+    }
+    /// <summary>Read-only accessibility/layout diagnostics used to locate the actual rendered controls.</summary>
+    public void ReportUiBounds()
+    {
+        using var buffer = new MemoryStream();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject(); var count = 0; var visited = new HashSet<DependencyObject>(); var ids = new HashSet<string>();
+            void Visit(DependencyObject node)
+            {
+                if (++count > 20000 || !visited.Add(node) || node is UIElement { Visibility: Visibility.Collapsed }) return;
+                if (node is FrameworkElement element && element.ActualWidth > 0 && element.ActualHeight > 0)
+                {
+                    var id = AutomationProperties.GetAutomationId(element);
+                    if (!string.IsNullOrEmpty(id) && !ids.Contains(id))
+                    {
+                        var p = element.TransformToVisual(this).TransformPoint(new Point(0, 0));
+                        if (double.IsFinite(p.X) && double.IsFinite(p.Y) && p.X >= 0 && p.Y >= 0 && p.X < ActualWidth && p.Y < ActualHeight)
+                        { ids.Add(id); w.WriteStartArray(id); w.WriteNumberValue(p.X); w.WriteNumberValue(p.Y); w.WriteNumberValue(element.ActualWidth); w.WriteNumberValue(element.ActualHeight); w.WriteEndArray(); }
+                    }
+                }
+                for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Visit(VisualTreeHelper.GetChild(node, i));
+            }
+            Visit(this); if (XamlRoot != null) foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot)) if (popup.Child != null) Visit(popup.Child); w.WriteEndObject();
+        }
+        Console.WriteLine("CADSPACE_UI_BOUNDS:" + Encoding.UTF8.GetString(buffer.ToArray()));
+        Console.WriteLine(FormattableString.Invariant($"CADSPACE_UI_STATE: workspace={_workspaceName}; model={Viewport.Is3D}; yaw={Viewport.ModelCamera.Yaw}; pitch={Viewport.ModelCamera.Pitch}; clean={_cleanScreen}; snapModes={(int)(_session?.SnapModes ?? ObjectSnapModes.None)}; grid={_session?.GridVisible}"));
     }
 }

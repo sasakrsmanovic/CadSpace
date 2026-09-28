@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/CadSpace.Dxf/CadSpace.Dxf.csproj" />
     <ProjectReference Include="../../src/CadSpace.Engine/CadSpace.Engine.csproj" />
+    <Compile Include="../../src/CadSpace.Rendering/ViewCubeGeometry.cs" Link="ViewCubeGeometry.cs" />
+    <Compile Include="../../src/CadSpace.Rendering/Cameras.cs" Link="Cameras.cs" />
     <Compile Include="../../src/CadSpace.Rendering/SelectionStream.cs" Link="SelectionStream.cs" />
   </ItemGroup>
 </Project>

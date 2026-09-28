@@ -22,7 +22,10 @@ public sealed partial class CadViewport : Grid
     private readonly DraftSurface _draft;
     private readonly CadDynamicInput _dynamic=new();
     private ModelSurface? _model;
-    private readonly TextBlock _viewLabel = CadTheme.Text("[Top]  [2D Wireframe]", 11, 0xFFBDCDD9);
+    private readonly CadViewportControls _viewControls = new();
+    private readonly CadViewCube _cube = new();
+    private readonly CadNavigationBar _navigation = new();
+    private string _navigationTool = "orbit";
     private readonly TextBlock _metrics = CadTheme.Text("", 10, CadTheme.Muted);
     private CadSession? _session;
     private CommandEngine? _commands;
@@ -38,26 +41,19 @@ public sealed partial class CadViewport : Grid
     public bool Is3D { get; private set; }
     public ModelVisualStyle VisualStyle { get; set; } = ModelVisualStyle.ShadedEdges;
     public Plane3? ClippingPlane { get; set; }
-    private readonly ComboBox _styleSelector = new() { ItemsSource = Enum.GetNames<ModelVisualStyle>(), SelectedItem = nameof(ModelVisualStyle.ShadedEdges), Width = 126, MinHeight = 26, FontSize = 10 };
     public event Action<Vec3>? CoordinatesChanged;
     public event Action<string>? Message;
     public event Action<bool>? ModeChanged;
     public CadViewport()
     {
         Background = CadTheme.Brush(0xFF1D242C); _draft = new(this) { IsHitTestVisible = false }; Children.Add(_draft); _overlay = new(this) { IsHitTestVisible = false }; Children.Add(_overlay);
-        _viewLabel.Margin = new Thickness(14, 12, 0, 0); _viewLabel.HorizontalAlignment = HorizontalAlignment.Left; _viewLabel.VerticalAlignment = VerticalAlignment.Top; _viewLabel.IsHitTestVisible = false; Children.Add(_viewLabel);
+        _viewControls.Margin = new Thickness(7, 7, 0, 0); _viewControls.HorizontalAlignment = HorizontalAlignment.Left; _viewControls.VerticalAlignment = VerticalAlignment.Top; Children.Add(_viewControls);
         _metrics.Margin = new Thickness(0, 0, 16, 12); _metrics.HorizontalAlignment = HorizontalAlignment.Right; _metrics.VerticalAlignment = VerticalAlignment.Bottom; _metrics.IsHitTestVisible = false; Children.Add(_metrics);
-        var navigation = new StackPanel { Spacing = 5, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 14, 16, 0) };
-        var cube = new Grid { Width = 70, Height = 64, Background = CadTheme.Brush(0xCC384451) };
-        var top = CadTheme.Button("TOP", () => Set3D(false)); top.HorizontalAlignment = HorizontalAlignment.Center; top.VerticalAlignment = VerticalAlignment.Center; top.FontSize = 11; cube.Children.Add(top); navigation.Children.Add(cube);
-        navigation.Children.Add(CadTheme.Button("SW ISO", () => { Set3D(true); ModelCamera.Yaw = 45; ModelCamera.Pitch = 30; Redraw(); }, 70));
-        navigation.Children.Add(CadTheme.Button("FRONT", () => { Set3D(true); ModelCamera.Yaw = -90; ModelCamera.Pitch = 0; Redraw(); }, 70));
-        navigation.Children.Add(CadTheme.Button("FIT", Fit, 70));
-        navigation.Children.Add(_styleSelector);
-        _styleSelector.SelectionChanged += (_, _) => { if (_styleSelector.SelectedItem is string style && Enum.TryParse<ModelVisualStyle>(style, out var value)) { VisualStyle = value; Set3D(true); UpdateViewLabel(); Redraw(); } };
-        navigation.Children.Add(CadTheme.Button("Perspective / Ortho", () => { ModelCamera.Orthographic = !ModelCamera.Orthographic; Set3D(true); UpdateViewLabel(); Redraw(); }, 126));
-        navigation.Children.Add(CadTheme.Button("Clip half / Off", () => { ClippingPlane = ClippingPlane == null ? Plane3.Through(_session?.Scene.Bounds.Center ?? default, Vec3.UnitZ) : null; Set3D(true); UpdateViewLabel(); Redraw(); }, 126));
-        Children.Add(navigation); Children.Add(_dynamic);
+        _cube.HorizontalAlignment = HorizontalAlignment.Right; _cube.VerticalAlignment = VerticalAlignment.Top; _cube.Margin = new Thickness(0, 12, 14, 0); Children.Add(_cube);
+        _navigation.HorizontalAlignment = HorizontalAlignment.Right; _navigation.VerticalAlignment = VerticalAlignment.Top; _navigation.Margin = new Thickness(0, 180, 14, 0); Children.Add(_navigation);
+        _cube.OrientationRequested += SetOrientation; _cube.OrbitRequested += (dx, dy) => { Set3D(true); ModelCamera.Orbit(dx, dy); Redraw(); };
+        _cube.NavigationRequested += Navigate; _navigation.NavigationRequested += Navigate; _viewControls.NavigationRequested += Navigate;
+        Children.Add(_dynamic);
         PointerPressed += Pressed; PointerMoved += Moved; PointerReleased += Released; PointerWheelChanged += Wheel;
         PointerEntered += (_, _) => { _inside = true; Redraw(); };
         PointerExited += (_, _) => { _inside = false; Redraw(); };
@@ -95,13 +91,48 @@ public sealed partial class CadViewport : Grid
         UpdateViewLabel();
         ModeChanged?.Invoke(enabled); Redraw();
     }
-    private void UpdateViewLabel() => _viewLabel.Text = Is3D ? $"[{(ModelCamera.Orthographic ? "Orthographic" : "Perspective")}]  [{VisualStyle}]  •  click to select, drag to orbit" + (ClippingPlane != null ? "  •  section clipping (uncapped)" : "") : "[Top]  [2D Wireframe]";
+    private void UpdateViewLabel()
+    {
+        _viewControls.Synchronize(Is3D, ModelCamera.Yaw, ModelCamera.Pitch, VisualStyle);
+        _cube.Synchronize(Is3D ? ModelCamera.Yaw : -90, Is3D ? ModelCamera.Pitch : 90);
+        _navigation.SetMode(_navigationTool);
+    }
+    public void SetOrientation(ViewOrientation orientation)
+    {
+        CancelInteraction(); _commands?.Cancel(); Set3D(true); ModelCamera.Yaw = orientation.Yaw; ModelCamera.Pitch = orientation.Pitch;
+        ModelCamera.Orthographic = true; Redraw();
+    }
+    public void Navigate(string action)
+    {
+        if (action.StartsWith("view:")) { SetOrientation(ViewCubeGeometry.Named(action[5..])); return; }
+        if (action.StartsWith("style:"))
+        {
+            if (action[6..] == "2D Wireframe") Set3D(false);
+            else { VisualStyle = Enum.Parse<ModelVisualStyle>(action[6..]); Set3D(true); }
+        }
+        else switch (action)
+        {
+            case "ZOOM": Fit(); break;
+            case "home": SetOrientation(ViewCubeGeometry.Named("SW Isometric")); Fit(); break;
+            case "zoomIn": case "zoomOut": var factor = action == "zoomIn" ? 1.35 : 1 / 1.35; if (Is3D) ModelCamera.Zoom(factor); else Camera.Zoom(factor, ActualWidth / 2, ActualHeight / 2); break;
+            case "projection": ModelCamera.Orthographic = !ModelCamera.Orthographic; Set3D(true); break;
+            case "clip": ClippingPlane = ClippingPlane == null ? Plane3.Through(_session?.Scene.Bounds.Center ?? default, Vec3.UnitZ) : null; Set3D(true); break;
+            case "pan": case "orbit": case "select": CancelInteraction(); _commands?.Cancel(); _navigationTool = action; if (action == "orbit") Set3D(true); break;
+        }
+        UpdateViewLabel(); Redraw();
+    }
+    private bool IsChrome(object source)
+    {
+        for (var node = source as DependencyObject; node != null && node != this; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+            if (node is Button or ComboBox or TextBox or CadViewCube or CadViewportControls or CadNavigationBar) return true;
+        return false;
+    }
     private void OnView(string view)
     {
         if (view is "LAYER" or "LINETYPE") return;
         if (view == "RENDERSTATS") { ReportRenderStatistics(); Console.WriteLine($"CADSPACE_HOST_CALLBACKS: scene={_sceneCallbacks}; model={_modelCallbacks}"); return; }
         if (view == "ZOOM") { Fit(); return; }
-        if (view.StartsWith("STYLE:")) { VisualStyle = Enum.Parse<ModelVisualStyle>(view[6..], true); _styleSelector.SelectedItem = VisualStyle.ToString(); Set3D(true); }
+        if (view.StartsWith("STYLE:")) { VisualStyle = Enum.Parse<ModelVisualStyle>(view[6..], true); Set3D(true); }
         else if (view.StartsWith("PROJECTION:")) { ModelCamera.Orthographic = view[11..] == "0"; Set3D(true); }
         else if (view.StartsWith("CLIP:"))
         {
@@ -109,7 +140,8 @@ public sealed partial class CadViewport : Grid
             else { var values = view[5..].Split(',').Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray(); ClippingPlane = Plane3.Through(new(values[0], values[1], values[2]), new(values[3], values[4], values[5])); }
             Set3D(true);
         }
-        else Set3D(view == "3DORBIT");
+        else if (view is "TOP" or "3DORBIT") { _navigationTool = view == "TOP" ? "select" : "orbit"; Set3D(view == "3DORBIT"); }
+        else return;
         UpdateViewLabel(); Redraw(); Console.WriteLine($"CADSPACE_VIEW: {view}");
     }
     private bool _redrawPending;
@@ -120,7 +152,7 @@ public sealed partial class CadViewport : Grid
     }
     private void DrawPending()
     {
-        _dynamic.Refresh();
+        _dynamic.Refresh(); UpdateViewLabel();
         if (_session == null || ActualWidth <= 0 || ActualHeight <= 0) return;
         Camera.Width = ActualWidth; Camera.Height = ActualHeight;
         if (_fit && ActualWidth > 100 && ActualHeight > 100) { Camera.Fit(_session.Scene.Bounds); _fit = false; }
@@ -145,7 +177,7 @@ public sealed partial class CadViewport : Grid
     }
     private void Pressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_session == null || _commands == null) return;
+        if (_session == null || _commands == null || IsChrome(e.OriginalSource)) return;
         var current = e.GetCurrentPoint(this); _previous = _pressScreen = current.Position; _pressWorld = World(current.Position); _dragged = false;
         if (current.Properties.IsRightButtonPressed)
         {
@@ -159,7 +191,7 @@ public sealed partial class CadViewport : Grid
             }
             e.Handled=true;return;
         }
-        _pan = current.Properties.IsMiddleButtonPressed; _orbit = Is3D && !_commands.IsActive && current.Properties.IsLeftButtonPressed;
+        _pan = current.Properties.IsMiddleButtonPressed || _navigationTool == "pan" && !_commands.IsActive && current.Properties.IsLeftButtonPressed; _orbit = Is3D && !_pan && !_commands.IsActive && current.Properties.IsLeftButtonPressed;
         if (_pan || _orbit) { CapturePointer(e.Pointer); e.Handled = true; return; }
         if (!current.Properties.IsLeftButtonPressed) return;
         if (!_commands.IsActive && !e.KeyModifiers.HasFlag(VirtualKeyModifiers.Shift) && TryBeginGrip(current.Position))
@@ -177,7 +209,7 @@ public sealed partial class CadViewport : Grid
         var current = e.GetCurrentPoint(this); var p = current.Position;
         var dx = p.X - _previous.X; var dy = p.Y - _previous.Y; _previous = p;
         if (_pan) { if (Is3D) ModelCamera.Pan(dx, dy, ActualHeight); else Camera.Pan(dx, dy); }
-        if (_orbit && (Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5 || _dragged)) { _dragged = true; ModelCamera.Orbit(dx, dy); }
+        if (_orbit && _navigationTool != "select" && (Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5 || _dragged)) { _dragged = true; ModelCamera.Orbit(dx, dy); }
         if (_selecting && Math.Abs(p.X - _pressScreen.X) + Math.Abs(p.Y - _pressScreen.Y) > 5) _dragged = true;
         if (_gripEntity != null)
         {
@@ -214,6 +246,7 @@ public sealed partial class CadViewport : Grid
     }
     private void Wheel(object sender, PointerRoutedEventArgs e)
     {
+        if (IsChrome(e.OriginalSource)) return;
         var p = e.GetCurrentPoint(this); var factor = Math.Pow(1.18, p.Properties.MouseWheelDelta / 120.0);
         if (Is3D) ModelCamera.ZoomAt(factor, p.Position.X, p.Position.Y, ActualWidth, ActualHeight); else Camera.Zoom(factor, p.Position.X, p.Position.Y);
         Redraw(); e.Handled = true;

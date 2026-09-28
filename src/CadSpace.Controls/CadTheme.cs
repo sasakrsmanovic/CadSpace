@@ -10,7 +10,7 @@ namespace CadSpace.Controls;
 
 public static class CadTheme
 {
-    public const uint Background = 0xFF252B34, Panel = 0xFF303741, Raised = 0xFF39424F, Edge = 0xFF48515D, TextColor = 0xFFDCE2EB, Muted = 0xFF9AA8BA, Accent = 0xFF4A9DE9;
+    public const uint Background = 0xFF252F3D, Panel = 0xFF3B4758, Raised = 0xFF4A5769, Edge = 0xFF526074, TextColor = 0xFFDCE2EB, Muted = 0xFF9AA8BA, Accent = 0xFF4A9DE9;
     public static SolidColorBrush Brush(uint color) => new(Windows.UI.Color.FromArgb((byte)(color >> 24), (byte)(color >> 16), (byte)(color >> 8), (byte)color));
     public static TextBlock Text(string text, double size = 12, uint color = TextColor) => new() { Text = text, FontSize = size, Foreground = Brush(color), VerticalAlignment = VerticalAlignment.Center };
     public static Button Button(string title, Action action, double width = double.NaN)
@@ -34,6 +34,7 @@ public sealed class CadIcon : SKCanvasElement
     {
         canvas.Save(); canvas.Scale((float)(area.Width / 32), (float)(area.Height / 32));
         using var p = new SKPaint { Color = new SKColor(138, 205, 241), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.8f, StrokeCap = SKStrokeCap.Round };
+        if (CadShellArtwork.Draw(Kind, canvas, p)) { canvas.Restore(); return; }
         void Line(float a, float b, float c, float d) => canvas.DrawLine(a, b, c, d, p);
         void Rect(float x, float y, float w, float h) => canvas.DrawRect(x, y, w, h, p);
         switch (Kind)

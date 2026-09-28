@@ -21,6 +21,8 @@
     <PackageReference Include="Uno.WinUI.Graphics3DGL" Version="6.7.135" Condition="'$(TargetFramework)' == 'net10.0-browserwasm'" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-browserwasm'">
+    <EmbeddedResource Remove="Platforms/WebAssembly/WasmScripts/WorkspaceSettings.js" />
+    <EmbeddedResource Include="Platforms/WebAssembly/WasmScripts/WorkspaceSettings.js" LogicalName="CadSpace.App.WasmScripts.WorkspaceSettings.js" />
     <EmbeddedResource Remove="Platforms/WebAssembly/WasmScripts/RecoveryStorage.js" />
     <EmbeddedResource Include="Platforms/WebAssembly/WasmScripts/RecoveryStorage.js" LogicalName="CadSpace.App.WasmScripts.RecoveryStorage.js" />
   </ItemGroup>
