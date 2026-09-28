@@ -49,7 +49,6 @@ Enter one command or prompted value at a time. Coordinates use invariant decimal
 
 See [line-editing details and boundaries](LINE-EDITING.md). Modification errors are reported in command history and do not partially update the drawing. Many standard AutoCAD options/subcommands are not implemented; command-name familiarity does not imply full option parity.
 
-
 ## Additional 3D and view workflows
 
 | Command | Alias | Inputs and boundary |
@@ -68,7 +67,7 @@ See [line-editing details and boundaries](LINE-EDITING.md). Modification errors 
 | PERSPECTIVE | PERSPECTIVE | 1 perspective, 0 orthographic. |
 | CLIP3D | CLIP3D | x,y,z,nx,ny,nz or OFF; retains normal·(point-origin) <= 0, uncapped display only. |
 
-The complete registry has 59 commands. EXPLODE now handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
+The complete registry has **64 commands**. EXPLODE handles analytic bulged-polyline segments as arcs. SelectAll is limited to visible entities of the active layout. Mesh tools do not imply ACIS/B-rep or every AutoCAD option.
 
 Tab accepts completion in an idle command box; F2 expands history, F12 toggles dynamic input, and Ctrl+1 toggles Properties. Snap options expose per-mode choices including line intersections/perpendiculars and circle/arc tangents. Browser shortcuts may take precedence.
 
@@ -85,4 +84,22 @@ STRETCH uses an explicit crossing box regardless of drag direction. It does not 
 
 In the 2D viewport, normal clicks/windows add, Shift removes and Ctrl toggles. Clicking empty space without a modifier clears selection. SC enables an overlap menu capped at 25 roots; Ctrl+W is an alternative where the browser does not reserve it. Text uses conservative envelopes. The 3D click-selection behavior remains separate.
 
-Visible blue grips edit line endpoints/midpoints, circle center/radius, polyline vertices, spline control points, dimension extension/location points, point/text/block insertions and placed equivalents. Arc/ellipse grips currently move only the center. Meshes, composite imported inserts and opaque geometry do not have editable subobject grips. Grip drag previews are transient; release creates one undo step, Escape and capture loss cancel. Locked objects expose no grips. To keep pointer work bounded, more than 200 selected roots or 4,096 handles hides grips; commands remain available.
+Visible blue grips edit line endpoints/midpoints, circle center/radius, polyline vertices, spline control points, dimension extension/location points, point/text/block insertions and placed equivalents. Arc/ellipse grips currently move only the center. Meshes, composite imported inserts and opaque geometry do not have editable subobject grips. Grip drag previews are transient; release creates one undo step, Escape and capture loss cancel. Locked objects expose no grips. More than 200 selected roots or 4,096 handles hides grips; commands remain available.
+
+## Layers and linetypes
+
+| Command | Alias | Inputs / behavior |
+| --- | --- | --- |
+| LAYER | LA | Opens the Layer Properties Manager; no scripted subcommands yet. Search/create/rename, current layer, RGB color, visibility, locking, lineweight, loaded linetype and unused-layer deletion. |
+| LINETYPE | LT | Opens the Linetype Manager. Load built-ins, create/update simple patterns, current/selected assignments and scales. |
+| CELTYPE | CELTYPE | BYLAYER, BYBLOCK or a loaded/built-in pattern name. Built-ins load by name if absent. Applies to new objects. |
+| CELTSCALE | CELTSCALE | Positive scale no larger than 1e9 for new objects. This transient session setting is not an undoable drawing change. |
+| LTSCALE | LTSCALE | Positive global drawing scale no larger than 1e9. Undoable and persisted in DXF/native projects. |
+
+The managers do not switch an existing 3D view to drafting. Drawing changes use the shared engine transaction API. Renaming a layer updates modeled nested references, but refuses opaque source references; Layer 0 cannot be renamed/deleted. Used and current layers cannot be deleted. Undo/load that removes a current layer/type resets the transient setting to 0/BYLAYER.
+
+Simple patterns use positive dash lengths, negative gaps and zero dots in drawing units. Example: `12,-4,0,-4` is dash-gap-dot-gap. Up to 64 finite elements are supported; the sum of absolute lengths must be between 1e-9 and 1e12. Resolved render periods are bounded separately. Dense subpixel patterns intentionally appear continuous.
+
+Properties type-only selection changes preserve mixed per-object scales. The Linetype Manager's explicit **Apply to selection** sets both type and the entered scale. Patterns on splines continue through tessellation; supported 2D/3D polyline generation flags choose continuous phase or per-segment restart. DXF groups and native projects retain these flags.
+
+Complex SHX/text/shape linetypes are retained as source-backed definitions with warnings and continuous display fallback. They are not editable simple patterns, and export without their original provenance is rejected. Exact curve arclength, endpoint fitting, affine/insert-scale conventions and all paper-space plotting scales are not fully qualified.
