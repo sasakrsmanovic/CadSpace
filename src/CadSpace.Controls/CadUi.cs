@@ -20,7 +20,13 @@ public static class CadUi
     {
         var button = CadTheme.Button(text, action); button.FontSize = 11; button.Height = 26; button.MinHeight = 24;
         button.Padding = new Thickness(7, 2, 7, 2); button.CornerRadius = new CornerRadius(0);
+        if (CadChromeGlyph.Supports(text)) SetGlyph(button, text);
         return Identify(button, id, text);
+    }
+    public static void SetGlyph(Button button, string symbol, uint color = CadTheme.TextColor)
+    {
+        if (!CadChromeGlyph.Supports(symbol)) throw new ArgumentException("Unknown workspace glyph.");
+        button.Content = new CadChromeGlyph { Symbol = symbol, Color = color, Width = 13, Height = 13, IsHitTestVisible = false };
     }
     public static void DescribeDialog(ContentDialog dialog, string id)
     {

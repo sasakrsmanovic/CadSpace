@@ -34,7 +34,7 @@ public sealed class CadDockPane : Border
         SizeGrip = new Border { Background = CadTheme.Brush(CadTheme.Edge), Width = 36, HorizontalAlignment = HorizontalAlignment.Right };
         CadUi.Identify(SizeGrip, "dock." + id + ".resize", "Resize " + title); CadTheme.At(root, SizeGrip, 2); Child = root;
     }
-    public void SetPinned(bool pinned) { _pin.Content = pinned ? "●" : "○"; _pin.Foreground = CadTheme.Brush(pinned ? CadTheme.TextColor : CadTheme.Accent); }
+    public void SetPinned(bool pinned) { CadUi.SetGlyph(_pin, pinned ? "●" : "○", pinned ? CadTheme.TextColor : CadTheme.Accent); _pin.Foreground = CadTheme.Brush(pinned ? CadTheme.TextColor : CadTheme.Accent); }
 }
 
 /// <summary>Multi-palette host: left/right stacks, in-window floating, auto-hide and bounded geometry.</summary>

@@ -6,6 +6,10 @@
 - Integrated left/right/floating/auto-hide palette host and searchable Tool Palettes with existing commands and blocks.
 - Replaced navigation placeholders with synchronized, pickable ViewCube, view/style menus and pan/zoom/orbit controls; fixed top/bottom camera matrix singularity.
 - Added undoable layout/property operations, separate validated UI preference persistence, stable control diagnostics and browser interaction regressions.
+- Small workspace controls use original vector chevrons, close, menu, floating-window and pin glyphs instead of depending on optional Unicode font coverage.
+- Added optional classic menus/MENUBAR, staged Display/Workspace/Status Bar Options, persisted navigation visibility and console height, and status customization that does not disable drafting modes.
+- Added Escape rollback for palette/console gestures, Ctrl-to-float, inside-edge right palette resizing, bounded open-drawing lists and unchanged-document-tab reuse. Fixed snap-menu callbacks after switching documents with identical initial settings.
+- Added popup-aware read-only diagnostics and published interaction regressions; 334 headless cases cover the complete increment.
 - Scope and remaining UI compatibility boundaries: docs/WORKSPACE.md.
 
 ## Unreleased — linetypes, layer management and selective tessellation

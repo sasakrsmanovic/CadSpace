@@ -9,16 +9,18 @@ ROI=(200,240,1120,760)
 def crop(path):return Image.open(path).convert('RGB').crop(ROI)
 def filled(image):return sum(min(r,g,b)>75 and max(r,g,b)-min(r,g,b)<55 for r,g,b in image.getdata())
 def blue_bounds(path, controls):
-    image=Image.open(path).convert('RGB').crop((0,190,1323,850))
+    x,y,w,h = controls['viewport.surface']
+    left,top,right,bottom = int(x),int(y),int(x+w),int(y+h)
+    image=Image.open(path).convert('RGB').crop((left,top,right,bottom))
     mask=Image.new('L',image.size);mask.putdata([255 if b-r>50 and b-g>20 and b>120 else 0 for r,g,b in image.getdata()])
-    # Navigation icons share the highlight palette; exclude their actual UI bounds,
-    # never the drawing or the selected geometry being verified.
+    # Exclude navigation chrome, never the viewport.surface container itself.
+    # This keeps the entire selected drawing and its grip pixels in the assertion.
     draw=ImageDraw.Draw(mask)
-    for name,(x,y,w,h) in controls.items():
-        if name.startswith('navigation.') or name.startswith('viewport.'):
-            draw.rectangle((x-1,y-191,x+w+1,y+h-189),fill=0)
+    for name,(cx,cy,cw,ch) in controls.items():
+        if name.startswith('navigation.') or name.startswith('viewport.') and name != 'viewport.surface':
+            draw.rectangle((cx-left-1,cy-top-1,cx+cw-left+1,cy+ch-top+1),fill=0)
     box=mask.getbbox();assert box is not None,'Expected editable blue grips'
-    return (box[0],box[1]+190,box[2],box[3]+190)
+    return (box[0]+left,box[1]+top,box[2]+left,box[3]+top)
 
 def difference(a,b):return sum(sum(abs(x-y) for x,y in zip(p,q))>45 for p,q in zip(a.getdata(),b.getdata()))
 
