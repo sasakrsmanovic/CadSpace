@@ -7,7 +7,7 @@
 
 **[Open the browser app](https://wieslawsoltes.github.io/CadSpace/)** · **[Commands](docs/COMMANDS.md)** · **[Coverage](docs/FEATURES.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Performance](docs/PERFORMANCE.md)**
 
-CadSpace is an independent C# CAD workspace built with Uno Platform, Skia and OpenGL/WebGL. It combines double-precision drafting, layers and blocks, rational splines, mesh modeling, ASCII/binary DXF exchange, and reusable desktop/browser controls.
+CadSpace is an independent C# CAD workspace built with [Uno Platform](https://platform.uno), Skia and OpenGL/WebGL. It combines double-precision drafting, layers and blocks, rational splines, mesh modeling, ASCII/binary DXF exchange, and reusable desktop/browser controls.
 
 > **Development preview—not full AutoCAD parity.** Mesh modeling is not an analytic ACIS/B-rep kernel, and arbitrary DXF editing is not universally lossless. Preserve originals, review export warnings, and save native projects. Best-effort five-second recovery checkpoints do not replace saved files or backups.
 
