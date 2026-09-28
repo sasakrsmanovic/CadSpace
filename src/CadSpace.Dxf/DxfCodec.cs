@@ -40,12 +40,13 @@ public static class DxfCodec
         var state = Drawing.Empty with { Name = name };
         var warnings = ImmutableArray.CreateBuilder<string>();
         var sourceRecords = ImmutableDictionary.CreateBuilder<Guid, ImmutableArray<DxfPair>>();
+        state = DxfLinetypes.Read(state, sections.FirstOrDefault(s => s.Name == "TABLES")?.Pairs ?? [], sections.FirstOrDefault(s => s.Name == "HEADER")?.Pairs ?? [], warnings.Add);
         foreach (var record in Records(sections.FirstOrDefault(s => s.Name == "TABLES")?.Pairs ?? []))
         {
             if (Type(record) != "LAYER") continue;
             var layerName = String(record, 2, "0"); var aci = Integer(record, 62, 7); var flags = Integer(record, 70);
             var color = Has(record, 420) ? 0xFF000000u | (uint)Integer(record, 420) : EntityGeometry.AciColor(Math.Abs(aci));
-            var layer = new Layer(layerName, color, aci >= 0 && (flags & 1) == 0, (flags & 4) != 0, Math.Max(0, Number(record, 370, 25)) / 100);
+            var layer = new Layer(layerName, color, aci >= 0 && (flags & 1) == 0, (flags & 4) != 0, Math.Max(0, Number(record, 370, 25)) / 100) { Linetype = String(record, 6, "CONTINUOUS") };
             state = state with { Layers = state.Layers.SetItem(layerName, layer) };
         }
         var blockNamesByHandle = Records(sections.FirstOrDefault(s => s.Name == "TABLES")?.Pairs ?? []).Where(r => Type(r) == "BLOCK_RECORD").ToDictionary(r => String(r, 5), r => String(r, 2), StringComparer.OrdinalIgnoreCase);
@@ -78,7 +79,7 @@ public static class DxfCodec
             }
             var layerName = String(record, 8, "0");
             if (!state.Layers.ContainsKey(layerName)) state = state with { Layers = state.Layers.Add(layerName, new(layerName)) };
-            entity = entity with { Handle = String(record, 5), Layer = layerName, ColorIndex = Integer(record, 62, 256), TrueColor = Has(record, 420) ? 0xFF000000u | (uint)Integer(record, 420) : null, LineWeight = Number(record, 370, -100) / 100, Visible = Integer(record, 60) == 0, Layout = LayoutFor(record) };
+            entity = entity with { Handle = String(record, 5), Layer = layerName, ColorIndex = Integer(record, 62, 256), TrueColor = Has(record, 420) ? 0xFF000000u | (uint)Integer(record, 420) : null, LineWeight = Number(record, 370, -100) / 100, Visible = Integer(record, 60) == 0, Layout = LayoutFor(record), Linetype = String(record, 6, "BYLAYER"), LinetypeScale = Number(record, 48, 1) };
             sourceRecords[entity.Id] = record; return entity;
         }
         var blockRecords = DxfEntityReader.LogicalRecords(sections.FirstOrDefault(s => s.Name == "BLOCKS")?.Pairs ?? []).ToArray();
@@ -131,6 +132,7 @@ public static class DxfCodec
             void Start(string type, string subclass, string? forcedHandle = null)
             {
                 Pair(0, type); Pair(5, forcedHandle ?? (string.IsNullOrEmpty(entity.Handle) ? NewHandle() : entity.Handle)); Pair(100, "AcDbEntity"); Pair(8, entity.Layer);
+                Pair(6, entity.Linetype); Pair(48, entity.LinetypeScale);
                 if (!entity.Visible) Pair(60, 1);
                 if (entity.Layout != "Model") { Pair(67, 1); Pair(410, entity.Layout); }
                 Pair(62, entity.ColorIndex); if (entity.TrueColor is uint c) Pair(420, c & 0xFFFFFF);
@@ -149,7 +151,7 @@ public static class DxfCodec
                 case ArcEntity arc: Start("ARC", "AcDbCircle"); Position(10, arc.Center); Pair(40, arc.Radius); Pair(100, "AcDbArc"); Pair(50, arc.StartAngle); Pair(51, arc.EndAngle); break;
                 case PolylineEntity poly:
                     if (poly.Vertices.Any(v => Math.Abs(v.Position.Z - poly.Vertices[0].Position.Z) > 1e-8)) throw new NotSupportedException("LWPOLYLINE requires a constant elevation.");
-                    Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, poly.Vertices.Length); Pair(70, poly.Closed ? 1 : 0); Pair(38, poly.Vertices[0].Position.Z);
+                    Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, poly.Vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, poly.Vertices[0].Position.Z);
                     foreach (var v in poly.Vertices) { Pair(10, v.Position.X); Pair(20, v.Position.Y); if (v.Bulge != 0) Pair(42, v.Bulge); } break;
                 case EllipseEntity ellipse: Start("ELLIPSE", "AcDbEllipse"); Position(10, ellipse.Center); Position(11, ellipse.MajorAxis); Pair(40, ellipse.Ratio); Pair(41, ellipse.StartParameter); Pair(42, ellipse.EndParameter); break;
                 case TextEntity text:

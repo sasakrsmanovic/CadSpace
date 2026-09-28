@@ -41,7 +41,7 @@ public sealed class CadRibbon : UserControl
             case "Insert": Group("Block definitions", "BLOCK", "INSERT", "EXPLODE"); Group("Pattern", "ARRAY"); Group("Drawing", "POINT", "TEXT"); break;
             case "Annotate": Group("Text and dimensions", "TEXT", "DIMALIGNED"); Group("Fill", "HATCH"); Group("Inquiry", "DIST", "AREA"); break;
             case "3D Modeling": Group("Mesh primitives", "BOX", "CYLINDER", "SPHERE", "CONE"); Group("Mesh surfaces", "EXTRUDE", "REVOLVE", "SWEEP", "LOFT"); Group("Mesh Booleans", "UNION", "SUBTRACT", "INTERSECT"); Group("Modify", "MOVE", "ROTATE3D", "MIRROR3D", "ALIGN3D"); Group("View", "3DORBIT", "TOP", "ZOOM"); break;
-            case "View": Group("Viewport", "TOP", "3DORBIT", "ZOOM"); Group("Selection", "QSELECT", "SELECTSIMILAR", "SELECTALL"); Group("History", "UNDO", "REDO"); Group("Command reference", "HELP", "RENDERSTATS"); break;
+            case "View": Group("Managers", "LAYER", "LINETYPE"); Group("Viewport", "TOP", "3DORBIT", "ZOOM"); Group("Selection", "QSELECT", "SELECTSIMILAR", "SELECTALL"); Group("History", "UNDO", "REDO"); Group("Command reference", "HELP", "RENDERSTATS"); break;
         }
     }
     private void Group(string title, params string[] commands)

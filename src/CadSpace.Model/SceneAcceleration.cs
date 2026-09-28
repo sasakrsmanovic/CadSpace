@@ -49,34 +49,76 @@ public sealed class SceneAcceleration
     }
 }
 
-/// <summary>Session-owned incremental tessellation. Unchanged immutable root entities reuse their paths, text and triangles.</summary>
+/// <summary>Dependency-aware incremental tessellation. Changes invalidate affected roots, not unrelated layers or blocks.</summary>
 public sealed class DrawingSceneCache
 {
-    private readonly Dictionary<Guid, (Entity Entity, DrawingScene Scene)> _roots = new();
+    private sealed record Entry(Entity Entity, DrawingScene Scene, string[] Layers, string[] Blocks, string[] Types, long Vertices);
+    private Dictionary<Guid, Entry> _roots = new();
     private Drawing? _drawing;
     private string _layout = "";
     private DrawingScene? _scene;
+    private static readonly HashSet<string> NoChanges = new(StringComparer.OrdinalIgnoreCase);
     public int RebuiltRoots { get; private set; }
     public int ReusedRoots { get; private set; }
+
+    private static HashSet<string> Changed<T>(ImmutableDictionary<string, T>? before, ImmutableDictionary<string, T> after)
+    {
+        if (ReferenceEquals(before, after)) return NoChanges;
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (before != null) foreach (var item in before) if (!after.TryGetValue(item.Key, out var value) || !EqualityComparer<T>.Default.Equals(item.Value, value)) result.Add(item.Key);
+        foreach (var key in after.Keys) if (before?.ContainsKey(key) != true) result.Add(key);
+        return result;
+    }
     public DrawingScene Build(Drawing drawing, string layout = "Model")
     {
-        if (_drawing != null && _drawing.Entities == drawing.Entities && ReferenceEquals(_drawing.Blocks, drawing.Blocks) && ReferenceEquals(_drawing.Layers, drawing.Layers) && layout == _layout && _scene != null) return _scene;
-        var reset = _drawing == null || !ReferenceEquals(_drawing.Blocks, drawing.Blocks) || !ReferenceEquals(_drawing.Layers, drawing.Layers) || layout != _layout;
-        var next = new Dictionary<Guid, (Entity Entity, DrawingScene Scene)>();
+        if (_drawing != null && _drawing.Entities == drawing.Entities && ReferenceEquals(_drawing.Blocks, drawing.Blocks) && ReferenceEquals(_drawing.Layers, drawing.Layers) && ReferenceEquals(_drawing.Linetypes, drawing.Linetypes) && _drawing.LinetypeScale == drawing.LinetypeScale && layout == _layout && _scene != null) return _scene;
+        var layers = Changed(_drawing?.Layers, drawing.Layers); var blocks = Changed(_drawing?.Blocks, drawing.Blocks); var types = Changed(_drawing?.Linetypes, drawing.Linetypes);
+        var scaleChanged = _drawing?.LinetypeScale != drawing.LinetypeScale;
+        var next = new Dictionary<Guid, Entry>(_roots.Count);
         var paths = ImmutableArray.CreateBuilder<ScenePath>(); var text = ImmutableArray.CreateBuilder<SceneText>(); var triangles = ImmutableArray.CreateBuilder<SceneTriangle>();
         RebuiltRoots = ReusedRoots = 0; long vertices = 0;
         foreach (var e in drawing.Entities)
         {
             if (!e.Visible || !e.Layout.Equals(layout, StringComparison.OrdinalIgnoreCase) || !drawing.LayerFor(e).Visible) continue;
-            DrawingScene part;
-            if (!reset && _roots.TryGetValue(e.Id, out var previous) && ReferenceEquals(previous.Entity, e)) { part = previous.Scene; ReusedRoots++; }
-            else { part = EntityGeometry.BuildScene(drawing with { Entities = [e] }, layout); RebuiltRoots++; }
-            vertices += part.Paths.Sum(p => (long)p.Points.Length);
-            if (vertices > 2_000_000 || triangles.Count + (long)part.Triangles.Length > 1_000_000) throw new ArgumentException("Expanded scene exceeds the geometry budget.");
-            next[e.Id] = (e, part); paths.AddRange(part.Paths); text.AddRange(part.Texts); triangles.AddRange(part.Triangles);
+            Entry entry;
+            if (layout == _layout && _roots.TryGetValue(e.Id, out var previous) && ReferenceEquals(previous.Entity, e) &&
+                !layers.Overlaps(previous.Layers) && !blocks.Overlaps(previous.Blocks) && !types.Overlaps(previous.Types) &&
+                (!scaleChanged || previous.Scene.Paths.All(p => p.Pattern == null)))
+            { entry = previous; ReusedRoots++; }
+            else
+            {
+                var part = EntityGeometry.BuildScene(drawing with { Entities = [e] }, layout);
+                var dependency = Dependencies(e, drawing);
+                entry = new(e, part, dependency.Layers, dependency.Blocks, dependency.Types, part.Paths.Sum(p => (long)p.Points.Length)); RebuiltRoots++;
+            }
+            vertices += entry.Vertices;
+            if (vertices > 2_000_000 || triangles.Count + (long)entry.Scene.Triangles.Length > 1_000_000) throw new ArgumentException("Expanded scene exceeds the geometry budget.");
+            next[e.Id] = entry; paths.AddRange(entry.Scene.Paths); text.AddRange(entry.Scene.Texts); triangles.AddRange(entry.Scene.Triangles);
         }
-        _roots.Clear(); foreach (var pair in next) _roots.Add(pair.Key, pair.Value);
-        _drawing = drawing; _layout = layout;
+        // Swap, rather than clear and copy a second dictionary; failures above leave the old cache intact.
+        _roots = next; _drawing = drawing; _layout = layout;
         return _scene = new(paths.ToImmutable(), text.ToImmutable(), triangles.ToImmutable());
+    }
+    private static (string[] Layers, string[] Blocks, string[] Types) Dependencies(Entity root, Drawing drawing)
+    {
+        if (root is not (BlockReferenceEntity or PlacedEntity or CompositeEntity))
+            return ([root.Layer], [], [Linetype.ResolveName(root.Linetype, drawing.LayerFor(root))]);
+        var layers = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var blocks = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var types = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Visit(Entity e, string? inheritedLayer, string? inheritedType, int depth)
+        {
+            if (depth > 32) throw new ArgumentException("Scene dependency depth exceeds its budget.");
+            var layerName = e.Layer == "0" && inheritedLayer != null ? inheritedLayer : e.Layer;
+            layers.Add(e.Layer); layers.Add(layerName);
+            var layer = drawing.Layers.GetValueOrDefault(layerName) ?? drawing.Layers["0"];
+            var type = Linetype.ResolveName(e.Linetype, layer, inheritedType); types.Add(type);
+            if (e is PlacedEntity placed) Visit(placed.Geometry, layerName, type, depth + 1);
+            else if (e is CompositeEntity composite) foreach (var child in composite.Children) Visit(child, layerName, type, depth + 1);
+            else if (e is BlockReferenceEntity insert)
+            {
+                blocks.Add(insert.Name);
+                if (drawing.Blocks.TryGetValue(insert.Name, out var block)) foreach (var child in block.Entities) Visit(child, layerName, type, depth + 1);
+            }
+        }
+        Visit(root, null, null, 0); return (layers.ToArray(), blocks.ToArray(), types.ToArray());
     }
 }

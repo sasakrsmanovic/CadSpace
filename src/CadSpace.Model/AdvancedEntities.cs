@@ -7,6 +7,7 @@ namespace CadSpace.Model;
 public sealed record Polyline3DEntity(ImmutableArray<Vec3> Points, bool Closed = false) : Entity
 {
     public override string Kind => "POLYLINE";
+    public bool ContinuousLinetype { get; init; }
 }
 
 /// <summary>Rational B-spline with an explicit, nondecreasing knot vector.</summary>
@@ -133,8 +134,8 @@ public static class AdvancedGeometry
     {
         switch (entity)
         {
-            case Polyline3DEntity p: yield return PolylineEntity.FromPoints(p.Points, p.Closed); break;
-            case SplineEntity s: yield return PolylineEntity.FromPoints(Tessellate(s), s.Closed); break;
+            case Polyline3DEntity p: yield return PolylineEntity.FromPoints(p.Points, p.Closed) with { ContinuousLinetype = p.ContinuousLinetype }; break;
+            case SplineEntity s: yield return PolylineEntity.FromPoints(Tessellate(s), s.Closed) with { ContinuousLinetype = true }; break;
             case CompositeEntity c: foreach (var child in c.Children) yield return child; break;
             case HatchRegionEntity h:
                 var loops = HatchLoops(h);
@@ -164,6 +165,10 @@ public static class AdvancedGeometry
             if (Math.Abs(spacing) < 1e-12) throw new ArgumentException("Hatch pattern lines require a nonzero perpendicular offset.");
             var min = Math.Min((bounds.Min.Y - origin.Y) / spacing, (bounds.Max.Y - origin.Y) / spacing);
             var max = Math.Max((bounds.Min.Y - origin.Y) / spacing, (bounds.Max.Y - origin.Y) / spacing);
+            if (!double.IsFinite(min) || !double.IsFinite(max) || Math.Abs(min) > 4503599627370495 || Math.Abs(max) > 4503599627370495)
+                throw new ArgumentException("Hatch pattern origin/spacing exceeds the supported numerical range.");
+            if ((Math.Floor(max) - Math.Ceiling(min) + 1) * polygons.Sum(p => (double)p.Length) > 10000000)
+                throw new ArgumentException("Hatch intersection work budget exceeded.");
             if (max - min > 20000) throw new ArgumentException("Hatch line count exceeds 20,000; increase pattern scale.");
             for (var k = (long)Math.Ceiling(min); k <= (long)Math.Floor(max); k++)
             {
@@ -183,8 +188,10 @@ public static class AdvancedGeometry
     {
         if (dashes.IsEmpty) { yield return (min, max); yield break; }
         var period = dashes.Sum(Math.Abs);
-        if (period < 1e-12) throw new ArgumentException("All-zero hatch dash patterns are not supported.");
+        if (!double.IsFinite(period) || period < 1e-12) throw new ArgumentException("All-zero hatch dash patterns are not supported.");
         var first = Math.Floor((min - phase) / period); var last = Math.Floor((max - phase) / period);
+        if (!double.IsFinite(first) || !double.IsFinite(last) || Math.Abs(first) > 4503599627370495 || Math.Abs(last) > 4503599627370495)
+            throw new ArgumentException("Hatch dash phase exceeds the supported numerical range.");
         if (last - first > 100000) throw new ArgumentException("Hatch dash count exceeds budget.");
         for (var cycle = first; cycle <= last; cycle++)
         {

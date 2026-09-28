@@ -18,12 +18,13 @@ internal static class DxfEntityWriter
         void Start(string type, string subclass, string? handle = null)
         {
             Pair(0, type); Pair(5, handle ?? (entity.Handle.Length == 0 ? nextHandle() : entity.Handle)); Pair(100, "AcDbEntity"); Pair(8, entity.Layer);
+            Pair(6, entity.Linetype); Pair(48, entity.LinetypeScale);
             if (!entity.Visible) Pair(60, 1);
             if (entity.Layout != "Model") { Pair(67, 1); Pair(410, entity.Layout); }
             Pair(62, entity.ColorIndex); if (entity.TrueColor is uint color) Pair(420, color & 0xFFFFFF);
             if (entity.LineWeight >= 0) Pair(370, Math.Round(entity.LineWeight * 100)); Pair(100, subclass);
         }
-        Entity Style(Entity child) => child with { Id = Guid.NewGuid(), Handle = "", Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Visible = entity.Visible, Layout = entity.Layout };
+        Entity Style(Entity child) => child with { Id = Guid.NewGuid(), Handle = "", Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Linetype = entity.Linetype, LinetypeScale = entity.LinetypeScale, Visible = entity.Visible, Layout = entity.Layout };
         void Hatch(HatchRegionEntity hatch, Vec3 normal = default)
         {
             if (normal == default) normal = Vec3.UnitZ;
@@ -81,13 +82,13 @@ internal static class DxfEntityWriter
                     if (similarity)
                     {
                         var vertices = poly.Vertices.Select(v => new PolyVertex(inverse.Point(t.Point(v.Position)), v.Bulge)).ToArray();
-                        Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, vertices.Length); Pair(70, poly.Closed ? 1 : 0); Pair(38, vertices[0].Position.Z); Point(210, frame.Z);
+                        Start("LWPOLYLINE", "AcDbPolyline"); Pair(90, vertices.Length); Pair(70, (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0)); Pair(38, vertices[0].Position.Z); Point(210, frame.Z);
                         foreach (var vertex in vertices) { Pair(10, vertex.Position.X); Pair(20, vertex.Position.Y); if (vertex.Bulge != 0) Pair(42, vertex.Bulge); }
                     }
                     else
                     {
                         warn("An affinely deformed bulged polyline is exported as a sampled 3D polyline.");
-                        buffer.Append(emit(Style(new Polyline3DEntity(EntityGeometry.PolylinePoints(poly).Select(t.Point).ToImmutableArray(), poly.Closed))));
+                        buffer.Append(emit(Style(new Polyline3DEntity(EntityGeometry.PolylinePoints(poly).Select(t.Point).ToImmutableArray(), poly.Closed) { ContinuousLinetype = poly.ContinuousLinetype })));
                     }
                     break;
                 case TextEntity textEntity when !textEntity.Multiline:
@@ -121,7 +122,7 @@ internal static class DxfEntityWriter
         switch (entity)
         {
             case Polyline3DEntity poly:
-                Start("POLYLINE", "AcDb3dPolyline"); Pair(66, 1); Point(10, default); Pair(70, 8 | (poly.Closed ? 1 : 0));
+                Start("POLYLINE", "AcDb3dPolyline"); Pair(66, 1); Point(10, default); Pair(70, 8 | (poly.Closed ? 1 : 0) | (poly.ContinuousLinetype ? 128 : 0));
                 foreach (var p in poly.Points) { Start("VERTEX", "AcDbVertex", nextHandle()); Pair(100, "AcDb3dPolylineVertex"); Point(10, p); Pair(70, 32); }
                 Pair(0, "SEQEND"); Pair(5, nextHandle()); Pair(100, "AcDbEntity"); Pair(8, entity.Layer); break;
             case SplineEntity spline:

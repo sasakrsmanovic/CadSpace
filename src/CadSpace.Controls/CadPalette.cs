@@ -81,11 +81,15 @@ public sealed class CadPalette : UserControl
         var layer = new ComboBox { ItemsSource = session.Document.Drawing.Layers.Keys.OrderBy(x => x).ToArray(), SelectedItem = selected[0].Layer, FontSize = 11, MinHeight = 28, HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = editable };
         layer.SelectionChanged += (_, _) => { if (_building || layer.SelectedItem is not string name || selected.All(e => e.Layer == name)) return; Try(() => { session.EditableSelection(); if (session.Document.Drawing.Layers[name].Locked) throw new InvalidOperationException("Target layer is locked."); var ids = selected.Select(e => e.Id).ToHashSet(); session.Document.Edit("Change layer", s => s with { Entities = s.Entities.Select(e => ids.Contains(e.Id) ? e with { Layer = name } : e).ToImmutableArray() }); }); };
         _body.Children.Add(CadTheme.Text("Layer", 11, CadTheme.Muted)); _body.Children.Add(layer);
+        var lineTypes = new ComboBox { ItemsSource = new[] { "BYLAYER", "BYBLOCK" }.Concat(session.Document.Drawing.Linetypes.Keys.Order()).ToArray(), SelectedItem = selected[0].Linetype, MinHeight = 28, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = editable };
+        lineTypes.SelectionChanged += (_, _) => { if (!_building && lineTypes.SelectedItem is string name && selected.Any(e => e.Linetype != name)) Try(() => session.SetSelectedLinetype(name)); };
+        _body.Children.Add(CadTheme.Text("Linetype", 11, CadTheme.Muted)); _body.Children.Add(lineTypes);
         if (selected.Length != 1) return;
         var entity = selected[0]; Field("Handle", entity.Handle.Length == 0 ? "New object" : entity.Handle);
         Action<string>? editColor = editable ? value => { if (!uint.TryParse(value.TrimStart('#'), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var color) || value.TrimStart('#').Length != 6) throw new ArgumentException("Use a six-digit RGB color."); Update(entity, e => e with { TrueColor = 0xFF000000u | color }); } : null;
         Field("RGB color", ((entity.TrueColor ?? session.Document.Drawing.LayerFor(entity).Color) & 0xFFFFFF).ToString("X6"), editColor);
         if (!editable) { Heading("Read only"); Field("Reason", entity is OpaqueEntity ? "Unsupported DXF record" : "Locked layer"); return; }
+        Field("Line scale", entity.LinetypeScale.ToString(CultureInfo.InvariantCulture), value => Update(entity, e => e with { LinetypeScale = Number(value) }));
         Heading("Geometry");
         switch (entity)
         {

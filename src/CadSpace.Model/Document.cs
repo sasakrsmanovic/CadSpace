@@ -32,6 +32,7 @@ public sealed class CadDocument
     private void Notify() { Revision++; Changed?.Invoke(); }
     public static void ValidateEntity(Entity entity, Drawing drawing, int depth = 0)
     {
+        if (!Linetype.ValidName(entity.Linetype) || !double.IsFinite(entity.LinetypeScale) || entity.LinetypeScale <= 0 || entity.LinetypeScale > 1e9) throw new ArgumentException("Invalid entity linetype or scale.");
         if (depth > 32) throw new ArgumentException("Geometry nesting exceeds 32 levels.");
         if (string.IsNullOrWhiteSpace(entity.Layout) || entity.Layout.IndexOfAny(['\0', '\n', '\r']) >= 0) throw new ArgumentException("Invalid entity layout name.");
         if (!drawing.Layers.ContainsKey(entity.Layer)) throw new ArgumentException($"Missing layer: {entity.Layer}");
@@ -52,6 +53,9 @@ public sealed class CadDocument
     public static void Validate(Drawing drawing)
     {
         if (drawing.LayoutBlockNames.Any(p => string.IsNullOrWhiteSpace(p.Key) || string.IsNullOrWhiteSpace(p.Value) || p.Key.IndexOfAny(['\0', '\r', '\n']) >= 0 || p.Value.IndexOfAny(['\0', '\r', '\n']) >= 0) || drawing.LayoutBlockNames.Values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != drawing.LayoutBlockNames.Count) throw new ArgumentException("Invalid layout/block mapping.");
+        if (!drawing.Linetypes.ContainsKey("CONTINUOUS") || !double.IsFinite(drawing.LinetypeScale) || drawing.LinetypeScale <= 0 || drawing.LinetypeScale > 1e9) throw new ArgumentException("Invalid drawing linetypes or global scale.");
+        foreach (var pair in drawing.Linetypes) { Linetype.Validate(pair.Value); if (!pair.Key.Equals(pair.Value.Name, StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Linetype key/name mismatch."); }
+        foreach (var layer in drawing.Layers.Values) if (!Linetype.ValidName(layer.Linetype)) throw new ArgumentException("Invalid layer linetype.");
         if (!drawing.Layers.ContainsKey("0")) throw new ArgumentException("Layer 0 is required.");
         if (drawing.Entities.Length > 1000000 || drawing.Entities.Select(e => e.Id).Distinct().Count() != drawing.Entities.Length) throw new ArgumentException("Too many entities or duplicate entity IDs.");
         foreach (var layer in drawing.Layers.Values)

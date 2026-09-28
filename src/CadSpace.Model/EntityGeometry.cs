@@ -3,7 +3,10 @@ using CadSpace.Geometry;
 
 namespace CadSpace.Model;
 
-public sealed record ScenePath(Guid EntityId, string Layer, uint Color, ImmutableArray<Vec3> Points, bool Closed, bool Filled = false, double Weight = 0.25);
+public sealed record ScenePath(Guid EntityId, string Layer, uint Color, ImmutableArray<Vec3> Points, bool Closed, bool Filled = false, double Weight = 0.25)
+{
+    public StrokePattern? Pattern { get; init; }
+}
 public sealed record SceneText(Guid EntityId, string Layer, uint Color, Vec3 Position, string Text, double Height, double Rotation)
 {
     public Vec3 AxisX { get; init; } = Vec3.UnitX;
@@ -62,7 +65,7 @@ public static class EntityGeometry
     {
         var paths = ImmutableArray.CreateBuilder<ScenePath>(); var texts = ImmutableArray.CreateBuilder<SceneText>(); var triangles = ImmutableArray.CreateBuilder<SceneTriangle>();
         var nodes = 0; var vertices = 0;
-        void Add(Entity e, Transform3 transform, Guid root, string? inheritedLayer, uint? inheritedColor, int depth)
+        void Add(Entity e, Transform3 transform, Guid root, string? inheritedLayer, uint? inheritedColor, int depth, string? inheritedLinetype = null)
         {
             if (depth > 32 || ++nodes > 200000) throw new ArgumentException("Expanded scene exceeds the nesting/entity budget.");
             var layerName = e.Layer == "0" && inheritedLayer != null ? inheritedLayer : e.Layer;
@@ -70,11 +73,19 @@ public static class EntityGeometry
             if (!layer.Visible || !e.Visible) return;
             var color = e.TrueColor ?? (e.ColorIndex == 0 ? inheritedColor ?? layer.Color : e.ColorIndex == 256 ? layer.Color : AciColor(e.ColorIndex));
             var weight = e.LineWeight < 0 ? layer.LineWeight : e.LineWeight;
+            var lineName = Linetype.ResolveName(e.Linetype, layer, inheritedLinetype);
+            StrokePattern? pattern = null;
+            if (drawing.Linetypes.TryGetValue(lineName, out var definition) && !definition.IsComplex && !definition.Elements.IsEmpty)
+            {
+                var scale = drawing.LinetypeScale * e.LinetypeScale;
+                if (!double.IsFinite(scale * definition.Length) || scale * definition.Length < 1e-9 || scale * definition.Length > 1e15) throw new ArgumentException("Resolved linetype scale exceeds the rendering range.");
+                pattern = new(definition, scale);
+            }
             void Path(IEnumerable<Vec3> points, bool closed = false, bool fill = false)
             {
                 var p = points.Select(transform.Point).ToImmutableArray(); vertices += p.Length;
                 if (vertices > 2000000) throw new ArgumentException("Expanded scene exceeds two million vertices.");
-                paths.Add(new(root, layerName, color, p, closed, fill, weight));
+                paths.Add(new(root, layerName, color, p, closed, fill, weight) { Pattern = fill ? null : pattern });
             }
             void Text(Vec3 p, string value, double height, double rotation = 0)
             {
@@ -82,18 +93,26 @@ public static class EntityGeometry
                 var yScale = orientation.Y.Length; var h = height * yScale;
                 texts.Add(new(root, layerName, color, transform.Point(p), value, h, GeometryMath.Angle(orientation.X)) { AxisX = orientation.X / Math.Max(1e-15, yScale), AxisY = orientation.Y / Math.Max(1e-15, yScale) });
             }
-            void Child(Entity child, Transform3 placement, bool forceStyle = true) => Add(forceStyle ? child with { Layer = layerName, TrueColor = color, ColorIndex = 256, LineWeight = weight } : child, placement, root, layerName, color, depth + 1);
+            void Child(Entity child, Transform3 placement, bool forceStyle = true) => Add(forceStyle ? child with { Layer = layerName, TrueColor = color, ColorIndex = 256, LineWeight = weight, Linetype = lineName, LinetypeScale = e.LinetypeScale } : child, placement, root, layerName, color, depth + 1, lineName);
             switch (e)
             {
                 case PlacedEntity placed: Child(placed.Geometry, placed.Placement.Then(transform)); break;
                 case CompositeEntity composite: foreach (var child in composite.Children) Child(child, transform, false); break;
                 case SplineEntity or Polyline3DEntity or HatchRegionEntity:
+                    if (e is HatchRegionEntity) { pattern = null; lineName = "CONTINUOUS"; }
                     foreach (var child in AdvancedGeometry.Expand(e)) Child(child, transform); break;
                 case LineEntity line: Path([line.Start, line.End]); break;
                 case PointEntity point: Path([point.Position]); break;
                 case CircleEntity circle: Path(Curve(circle.Center, circle.Radius, 0, 360), true); break;
                 case ArcEntity arc: Path(Curve(arc.Center, arc.Radius, arc.StartAngle, GeometryMath.NormalizeAngle(arc.EndAngle - arc.StartAngle))); break;
-                case PolylineEntity polyline: Path(PolylinePoints(polyline), polyline.Closed); break;
+                case PolylineEntity polyline:
+                    if (pattern != null && !polyline.ContinuousLinetype)
+                    {
+                        for (var i = 0; i < polyline.Vertices.Length - (polyline.Closed ? 0 : 1); i++)
+                            Path(PolylinePoints(new([polyline.Vertices[i], polyline.Vertices[(i + 1) % polyline.Vertices.Length]], false)));
+                    }
+                    else Path(PolylinePoints(polyline), polyline.Closed);
+                    break;
                 case EllipseEntity ellipse:
                     var minor = new Vec3(-ellipse.MajorAxis.Y, ellipse.MajorAxis.X) * ellipse.Ratio;
                     var sweep = ellipse.EndParameter - ellipse.StartParameter; if (sweep <= 0) sweep += 2 * Math.PI;
@@ -107,8 +126,9 @@ public static class EntityGeometry
                     Path([p1 + direction * 7 + normal * 2, p1, p1 + direction * 7 - normal * 2]); Path([p2 - direction * 7 + normal * 2, p2, p2 - direction * 7 - normal * 2]);
                     Text((p1 + p2) / 2 + normal * 4, vector.Length.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), 10, GeometryMath.Angle(direction)); break;
                 case HatchEntity hatch:
-                    var pattern = ImmutableArray.Create(new HatchPatternLine(hatch.Angle, default, Transform3.RotationZ(hatch.Angle).Vector(new(0, hatch.Spacing)), []));
-                    var region = new HatchRegionEntity([hatch.Boundary.Select(p => new PolyVertex(p)).ToImmutableArray()], hatch.Solid, pattern, hatch.Solid ? "SOLID" : "ANSI31");
+                    pattern = null; lineName = "CONTINUOUS";
+                    var hatchPattern = ImmutableArray.Create(new HatchPatternLine(hatch.Angle, default, Transform3.RotationZ(hatch.Angle).Vector(new(0, hatch.Spacing)), []));
+                    var region = new HatchRegionEntity([hatch.Boundary.Select(p => new PolyVertex(p)).ToImmutableArray()], hatch.Solid, hatchPattern, hatch.Solid ? "SOLID" : "ANSI31");
                     foreach (var child in AdvancedGeometry.Expand(region)) Child(child, transform); break;
                 case MeshEntity mesh:
                     var edges = new Dictionary<(int, int), (Vec3 Normal, int Count, bool Crease)>();
@@ -133,7 +153,7 @@ public static class EntityGeometry
                     break;
                 case BlockReferenceEntity insert when drawing.Blocks.TryGetValue(insert.Name, out var block):
                     var local = Transform3.Translation(-block.BasePoint).Then(Transform3.Scaling(insert.Scale)).Then(Transform3.RotationZ(insert.Rotation)).Then(Transform3.Translation(insert.Position)).Then(transform);
-                    foreach (var child in block.Entities) Add(child, local, root, layerName, color, depth + 1); break;
+                    foreach (var child in block.Entities) Add(child, local, root, layerName, color, depth + 1, lineName); break;
             }
         }
         foreach (var entity in drawing.Entities.Where(e => e.Layout.Equals(layout, StringComparison.OrdinalIgnoreCase))) Add(entity, Transform3.Identity, entity.Id, null, null, 0);
@@ -145,7 +165,7 @@ public static class EntityGeometry
         var scale = transform.X.Length; var mirror = GeometryMath.Cross2(transform.X, transform.Y) < 0;
         var xySimilarity = Math.Abs(transform.X.Dot(transform.Y)) <= 1e-7 * Math.Max(1, scale * scale) && Math.Abs(scale - transform.Y.Length) <= 1e-7 * Math.Max(1, scale) && Math.Abs(transform.X.Z) + Math.Abs(transform.Y.Z) <= 1e-7;
         double Angle(double angle) => GeometryMath.Angle(transform.Vector(GeometryMath.OnCircle(default, 1, angle)));
-        Entity Place() => new PlacedEntity(entity, transform) { Id = entity.Id, Handle = entity.Handle, Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Visible = entity.Visible, Layout = entity.Layout };
+        Entity Place() => new PlacedEntity(entity, transform) { Id = entity.Id, Handle = entity.Handle, Layer = entity.Layer, ColorIndex = entity.ColorIndex, TrueColor = entity.TrueColor, LineWeight = entity.LineWeight, Visible = entity.Visible, Layout = entity.Layout, Linetype = entity.Linetype, LinetypeScale = entity.LinetypeScale };
         Entity result = entity switch
         {
             OpaqueEntity => throw new NotSupportedException("Opaque DXF records cannot be transformed without a geometry interpreter."),

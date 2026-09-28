@@ -118,8 +118,8 @@ internal static class DxfDocumentWriter
             var header = oldTables.TryGetValue(name, out var old) ? Set(Set(old.Header, 5, id), 70, values.Count) : Record(0, "TABLE", 2, name, 5, id, 330, "0", 100, "AcDbSymbolTable", 70, values.Count);
             tables.Append(Encode(header)); foreach (var record in values) tables.Append(Encode(Owner(record, id))); tables.Append("0\nENDTAB\n");
         }
-        foreach (var (name, table) in oldTables.Where(t => t.Key is not ("LAYER" or "BLOCK_RECORD"))) Table(name, table.Entries);
-        if (!oldTables.ContainsKey("LTYPE")) Table("LTYPE", new[] { "BYBLOCK", "BYLAYER", "CONTINUOUS" }.Select(n => Record(0, "LTYPE", 5, next(), 100, "AcDbSymbolTableRecord", 100, "AcDbLinetypeTableRecord", 2, n, 70, 0, 3, n == "CONTINUOUS" ? "Solid line" : "", 72, 65, 73, 0, 40, 0)));
+        foreach (var (name, table) in oldTables.Where(t => t.Key is not ("LTYPE" or "LAYER" or "BLOCK_RECORD"))) Table(name, table.Entries);
+        Table("LTYPE", DxfLinetypes.Write(drawing, source, Entries("LTYPE"), next));
         if (!oldTables.ContainsKey("STYLE")) Table("STYLE", [Record(0, "STYLE", 5, next(), 100, "AcDbSymbolTableRecord", 100, "AcDbTextStyleTableRecord", 2, "Standard", 70, 0, 40, 0, 41, 1, 50, 0, 71, 0, 42, 2.5, 3, "txt", 4, "")]);
         if (!oldTables.ContainsKey("APPID")) Table("APPID", [Record(0, "APPID", 5, next(), 100, "AcDbSymbolTableRecord", 100, "AcDbRegAppTableRecord", 2, "ACAD", 70, 0)]);
         var oldLayers = Entries("LAYER").ToDictionary(p => Value(p, 2), p => p, StringComparer.OrdinalIgnoreCase);
@@ -128,7 +128,7 @@ internal static class DxfDocumentWriter
             var r = oldLayers.TryGetValue(layer.Name, out var old) ? old : Record(0, "LAYER", 5, next(), 100, "AcDbSymbolTableRecord", 100, "AcDbLayerTableRecord", 2, layer.Name, 70, 0, 6, "CONTINUOUS");
             if (source?.Original.Layers.TryGetValue(layer.Name, out var original) == true && original == layer) return r;
             var flags = int.TryParse(Value(r, 70), out var f) ? f : 0; flags &= ~5; if (layer.Locked) flags |= 4;
-            r = Set(r, 70, flags); r = Set(r, 62, layer.Visible ? 7 : -7); r = Set(r, 420, layer.Color & 0xFFFFFF); return Set(r, 370, Math.Round(layer.LineWeight * 100));
+            r = Set(r, 6, layer.Linetype); r = Set(r, 70, flags); r = Set(r, 62, layer.Visible ? 7 : -7); r = Set(r, 420, layer.Color & 0xFFFFFF); return Set(r, 370, Math.Round(layer.LineWeight * 100));
         }));
         Table("BLOCK_RECORD", names.Select(name =>
         {
@@ -159,8 +159,8 @@ internal static class DxfDocumentWriter
         }
         var entities = string.Concat(drawing.Entities.Where(e => e.Layout.Equals("Model", StringComparison.OrdinalIgnoreCase)).Select(e => Owned(emit(e), blockIds[layouts["Model"]])));
         var headerPairs = new List<DxfPair>(); var skip = false;
-        foreach (var pair in Section("HEADER")) { if (pair.Code == 9) skip = pair.Value is "$ACADVER" or "$HANDSEED" or "$INSUNITS"; if (!skip) headerPairs.Add(pair); }
-        headerPairs.AddRange(Record(9, "$ACADVER", 1, "AC1027", 9, "$INSUNITS", 70, drawing.Units, 9, "$HANDSEED", 5, next()));
+        foreach (var pair in Section("HEADER")) { if (pair.Code == 9) skip = pair.Value is "$ACADVER" or "$HANDSEED" or "$INSUNITS" or "$LTSCALE"; if (!skip) headerPairs.Add(pair); }
+        headerPairs.AddRange(Record(9, "$ACADVER", 1, "AC1027", 9, "$INSUNITS", 70, drawing.Units, 9, "$LTSCALE", 40, drawing.LinetypeScale, 9, "$HANDSEED", 5, next()));
         var output = new StringBuilder();
         void Append(string name, string content) => output.Append("0\nSECTION\n2\n").Append(name).Append('\n').Append(content).Append("0\nENDSEC\n");
         Append("HEADER", Encode(headerPairs)); if (!Section("CLASSES").IsEmpty) Append("CLASSES", Encode(Section("CLASSES")));

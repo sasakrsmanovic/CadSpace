@@ -98,6 +98,7 @@ public sealed partial class CadViewport : Grid
     private void UpdateViewLabel() => _viewLabel.Text = Is3D ? $"[{(ModelCamera.Orthographic ? "Orthographic" : "Perspective")}]  [{VisualStyle}]  •  click to select, drag to orbit" + (ClippingPlane != null ? "  •  section clipping (uncapped)" : "") : "[Top]  [2D Wireframe]";
     private void OnView(string view)
     {
+        if (view is "LAYER" or "LINETYPE") return;
         if (view == "RENDERSTATS") { ReportRenderStatistics(); Console.WriteLine($"CADSPACE_HOST_CALLBACKS: scene={_sceneCallbacks}; model={_modelCallbacks}"); return; }
         if (view == "ZOOM") { Fit(); return; }
         if (view.StartsWith("STYLE:")) { VisualStyle = Enum.Parse<ModelVisualStyle>(view[6..], true); _styleSelector.SelectedItem = VisualStyle.ToString(); Set3D(true); }

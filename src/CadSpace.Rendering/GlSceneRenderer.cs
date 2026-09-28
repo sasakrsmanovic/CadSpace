@@ -15,6 +15,9 @@ public sealed class GlSceneRenderer
     public long GeometryUploads { get; private set; }
     public long SelectionBytesUploaded { get; private set; }
     private int _matrix, _clip, _flat, _triangleCount, _lineCount, _pointCount;
+    private int _patternCount, _patternLength, _patternElements;
+    private readonly float[] _patternBuffer = new float[64];
+    private readonly List<(int Start, int Count, StrokePattern? Pattern)> _lineBatches = new();
     private DrawingScene? _uploaded;
     private Vec3 _origin;
     private readonly GlTextRenderer _text = new();
@@ -27,11 +30,15 @@ public sealed class GlSceneRenderer
         var version = language.Contains("OpenGL ES", StringComparison.OrdinalIgnoreCase) ? "#version 300 es" : "#version 330 core";
         try
         {
-            _program = Link(gl, version + "\nprecision highp float;\nlayout(location=0) in vec3 aPosition;layout(location=1) in vec3 aNormal;layout(location=2) in vec3 aColor;layout(location=3) in float aSelected;uniform mat4 uMatrix;out vec3 vColor;out vec3 vWorld;void main(){float n=length(aNormal);float light=n<0.1?1.0:(0.35+0.65*abs(dot(normalize(aNormal),normalize(vec3(0.4,-0.5,0.8)))));vColor=mix(aColor,vec3(0.337,0.675,1.0),aSelected)*light;vWorld=aPosition;gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=5.0;}",
-                version + "\nprecision highp float;\nin vec3 vColor;in vec3 vWorld;uniform vec4 uClip;uniform int uFlat;out vec4 outColor;void main(){if(dot(uClip.xyz,vWorld)+uClip.w>0.0)discard;outColor=vec4(uFlat==1?vec3(0.114,0.141,0.173):vColor,1.0);}");
+            _program = Link(gl, version + "\nprecision highp float;\nlayout(location=0) in vec3 aPosition;layout(location=1) in vec3 aNormal;layout(location=2) in vec3 aColor;layout(location=3) in float aSelected;layout(location=4) in float aDistance;out float vDistance;uniform mat4 uMatrix;out vec3 vColor;out vec3 vWorld;void main(){float n=length(aNormal);float light=n<0.1?1.0:(0.35+0.65*abs(dot(normalize(aNormal),normalize(vec3(0.4,-0.5,0.8)))));vColor=mix(aColor,vec3(0.337,0.675,1.0),aSelected)*light;vWorld=aPosition;vDistance=aDistance;gl_Position=uMatrix*vec4(aPosition,1.0);gl_PointSize=5.0;}",
+                version + "\nprecision highp float;\nin vec3 vColor;in vec3 vWorld;uniform vec4 uClip;uniform int uFlat;in float vDistance;uniform int uPatternCount;uniform float uPatternLength;uniform float uPattern[64];out vec4 outColor;void main(){if(dot(uClip.xyz,vWorld)+uClip.w>0.0)discard;float pixel=max(fwidth(vDistance),0.000001);if(uPatternCount>0 && uPatternLength>=2.0*pixel){float phase=mod(vDistance,uPatternLength);float at=0.0;bool ink=false;for(int i=0;i<64;i++){if(i>=uPatternCount)break;float dash=uPattern[i];float next=at+abs(dash);if(dash>0.0 && phase>=at && phase<next)ink=true;if(dash==0.0){float d=abs(phase-at);if(min(d,uPatternLength-d)<=pixel*0.75)ink=true;}at=next;}if(!ink)discard;}outColor=vec4(uFlat==1?vec3(0.114,0.141,0.173):vColor,1.0);}");
             _matrix = gl.GetUniformLocation(_program, "uMatrix"); _clip = gl.GetUniformLocation(_program, "uClip"); _flat = gl.GetUniformLocation(_program, "uFlat");
+            _patternCount = gl.GetUniformLocation(_program, "uPatternCount");
+            _patternLength = gl.GetUniformLocation(_program, "uPatternLength");
+            _patternElements = gl.GetUniformLocation(_program, "uPattern[0]");
             _vao = gl.GenVertexArray(); _vertices = gl.GenBuffer(); gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices);
-            for (uint i = 0; i < 3; i++) { gl.VertexAttribPointer(i, 3, VertexAttribPointerType.Float, false, 9 * sizeof(float), (void*)(i * 3 * sizeof(float))); gl.EnableVertexAttribArray(i); }
+            for (uint i = 0; i < 3; i++) { gl.VertexAttribPointer(i, 3, VertexAttribPointerType.Float, false, 10 * sizeof(float), (void*)(i * 3 * sizeof(float))); gl.EnableVertexAttribArray(i); }
+            gl.VertexAttribPointer(4, 1, VertexAttribPointerType.Float, false, 10 * sizeof(float), (void*)(9 * sizeof(float))); gl.EnableVertexAttribArray(4);
             _highlight=gl.GenBuffer(); gl.BindBuffer(BufferTargetARB.ArrayBuffer,_highlight);
             gl.VertexAttribPointer(3,1,VertexAttribPointerType.Float,false,sizeof(float),(void*)0); gl.EnableVertexAttribArray(3);
             _text.Initialize(gl, version); Device = gl.GetStringS(StringName.Renderer); _uploaded = null;
@@ -91,13 +98,26 @@ public sealed class GlSceneRenderer
             }
             gl.UseProgram(_program); gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices);
             var matrix = camera.Matrix(width / Math.Max(1, height)); gl.UniformMatrix4(_matrix, 1, false, (float*)&matrix); SetClip(gl, _clip, clip, camera.Origin);
+            gl.Uniform1(_patternCount, 0);
             if (style != ModelVisualStyle.Wireframe)
             {
                 gl.Uniform1(_flat, style == ModelVisualStyle.HiddenLine ? 1 : 0); gl.Enable(EnableCap.PolygonOffsetFill); gl.PolygonOffset(1, 1);
                 gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_triangleCount); gl.Disable(EnableCap.PolygonOffsetFill);
             }
             gl.Uniform1(_flat, 0);
-            if (style != ModelVisualStyle.Shaded) gl.DrawArrays(PrimitiveType.Lines, _triangleCount, (uint)_lineCount);
+            if (style != ModelVisualStyle.Shaded) foreach (var batch in _lineBatches)
+            {
+                if (batch.Pattern is { } pattern)
+                {
+                    gl.Uniform1(_patternCount, pattern.Definition.Elements.Length); gl.Uniform1(_patternLength, (float)pattern.Length);
+                    Array.Clear(_patternBuffer);
+                    for (var i = 0; i < pattern.Definition.Elements.Length; i++) _patternBuffer[i] = (float)(pattern.Definition.Elements[i] * pattern.Scale);
+                    fixed (float* values = _patternBuffer) gl.Uniform1(_patternElements, 64, values);
+                }
+                else gl.Uniform1(_patternCount, 0);
+                gl.DrawArrays(PrimitiveType.Lines, batch.Start, (uint)batch.Count);
+            }
+            gl.Uniform1(_patternCount, 0);
             gl.DrawArrays(PrimitiveType.Points, _triangleCount + _lineCount, (uint)_pointCount);
             _text.Render(gl, matrix, camera.Origin, clip);
         }
@@ -111,13 +131,14 @@ public sealed class GlSceneRenderer
     private void Upload(GL gl, DrawingScene scene, Vec3 origin, IReadOnlySet<Guid> selection)
     {
         var capacity = checked(scene.Triangles.Length*3 + scene.Paths.Sum(p => p.Points.Length==1?1:Math.Max(0,p.Points.Length-(p.Closed?0:1))*2));
-        var data = new float[checked(capacity*9)]; var offset=0; _flags.Clear();
-        void Vertex(Vec3 position, Vec3 normal, uint color, Guid id, double tint = 1)
+        var data = new float[checked(capacity*10)]; var offset=0; _flags.Clear();
+        void Vertex(Vec3 position, Vec3 normal, uint color, Guid id, double tint = 1, double distance = 0)
         {
             var p = position - origin;
             data[offset++]=(float)p.X; data[offset++]=(float)p.Y; data[offset++]=(float)p.Z;
             data[offset++]=(float)normal.X; data[offset++]=(float)normal.Y; data[offset++]=(float)normal.Z;
             data[offset++]=(float)(((color>>16)&255)/255.0*tint); data[offset++]=(float)(((color>>8)&255)/255.0*tint); data[offset++]=(float)((color&255)/255.0*tint);
+            data[offset++]=(float)distance;
             _flags.AddVertex(id);
         }
         foreach (var triangle in scene.Triangles)
@@ -125,12 +146,26 @@ public sealed class GlSceneRenderer
             var n = (triangle.B - triangle.A).Cross(triangle.C - triangle.A); if (n.Length < 1e-12) continue; n = n.Normalized;
             Vertex(triangle.A, n, triangle.Color, triangle.EntityId); Vertex(triangle.B, n, triangle.Color, triangle.EntityId); Vertex(triangle.C, n, triangle.Color, triangle.EntityId);
         }
-        _triangleCount = offset / 9;
-        foreach (var path in scene.Paths)
-            for (var i = 0; i < path.Points.Length - (path.Closed ? 0 : 1); i++) { Vertex(path.Points[i], default, path.Color, path.EntityId, .8); Vertex(path.Points[(i + 1) % path.Points.Length], default, path.Color, path.EntityId, .8); }
-        _lineCount = offset / 9 - _triangleCount;
+        _triangleCount = offset / 10;
+        _lineBatches.Clear();
+        foreach (var group in scene.Paths.Where(p => p.Points.Length > 1).GroupBy(p => p.Pattern))
+        {
+            var start = offset / 10;
+            foreach (var path in group)
+            {
+                double phase = 0;
+                for (var i = 0; i < path.Points.Length - (path.Closed ? 0 : 1); i++)
+                {
+                    var a = path.Points[i]; var b = path.Points[(i + 1) % path.Points.Length]; var length = a.DistanceTo(b);
+                    Vertex(a, default, path.Color, path.EntityId, .8, phase); Vertex(b, default, path.Color, path.EntityId, .8, phase + length);
+                    phase = path.Pattern == null ? 0 : (phase + length) % path.Pattern.Length;
+                }
+            }
+            _lineBatches.Add((start, offset / 10 - start, group.Key));
+        }
+        _lineCount = offset / 10 - _triangleCount;
         foreach (var path in scene.Paths.Where(p => p.Points.Length == 1)) Vertex(path.Points[0], default, path.Color, path.EntityId);
-        _pointCount = offset / 9 - _triangleCount - _lineCount;
+        _pointCount = offset / 10 - _triangleCount - _lineCount;
         gl.BindVertexArray(_vao); gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vertices); gl.BufferData<float>(BufferTargetARB.ArrayBuffer, data.AsSpan(0,offset), BufferUsageARB.StaticDraw);
         _flags.Allocate(); gl.BindBuffer(BufferTargetARB.ArrayBuffer,_highlight); gl.BufferData<float>(BufferTargetARB.ArrayBuffer,_flags.Values.AsSpan(),BufferUsageARB.DynamicDraw);
     }

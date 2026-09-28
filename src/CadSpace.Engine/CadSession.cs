@@ -34,6 +34,8 @@ public sealed partial class CadSession
     public IEnumerable<string> AvailableLayouts => Document.Drawing.LayoutBlockNames.Keys.Concat(Document.Drawing.Entities.Select(e => e.Layout)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n == "Model" ? 0 : 1).ThenBy(n => n);
     public bool IsVisible(Entity entity) => entity.Visible && entity.Layout.Equals(ActiveLayout, StringComparison.OrdinalIgnoreCase) && Document.Drawing.LayerFor(entity).Visible;
     public string CurrentLayer { get; set; } = "0";
+    public string CurrentLinetype { get; set; } = "BYLAYER";
+    public double CurrentLinetypeScale { get; set; } = 1;
     public bool GridVisible { get; set; } = true;
     public bool GridSnap { get; set; }
     public bool ObjectSnap { get; set; } = true;
@@ -115,7 +117,8 @@ public sealed partial class CadSession
     {
         if (!Document.Drawing.Layers.TryGetValue(CurrentLayer, out var layer)) CurrentLayer = "0";
         else if (layer.Locked) throw new InvalidOperationException("The current layer is locked.");
-        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer, Layout = ActiveLayout }).ToArray());
+        foreach (var entity in entities) if (!double.IsFinite(entity.LinetypeScale) || entity.LinetypeScale <= 0) throw new ArgumentException("Invalid entity linetype scale.");
+        Document.Add(command, entities.Select(e => e with { Layer = CurrentLayer, Layout = ActiveLayout, Linetype = CurrentLinetype, LinetypeScale = CurrentLinetypeScale }).ToArray());
     }
     public void TransformSelection(string name, Transform3 transform, bool copy = false)
     {
@@ -147,7 +150,7 @@ public sealed partial class CadSession
                     for (var i = 0; i < poly.Vertices.Length - (poly.Closed ? 0 : 1); i++)
                     {
                         var a = poly.Vertices[i]; var b = poly.Vertices[(i + 1) % poly.Vertices.Length];
-                        result.Add(AdvancedEditing.ExplodeSegment(a,b) with { Layer=poly.Layer, TrueColor=poly.TrueColor, ColorIndex=poly.ColorIndex, LineWeight=poly.LineWeight, Layout=poly.Layout });
+                        result.Add(AdvancedEditing.ExplodeSegment(a,b) with { Layer=poly.Layer, TrueColor=poly.TrueColor, ColorIndex=poly.ColorIndex, LineWeight=poly.LineWeight, Layout=poly.Layout, Linetype=poly.Linetype, LinetypeScale=poly.LinetypeScale });
                     }
                     break;
                 case BlockReferenceEntity insert when Document.Drawing.Blocks.TryGetValue(insert.Name, out var block):

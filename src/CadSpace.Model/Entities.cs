@@ -11,6 +11,8 @@ public abstract record Entity
     public int ColorIndex { get; init; } = 256;
     public uint? TrueColor { get; init; }
     public double LineWeight { get; init; } = -1;
+    public string Linetype { get; init; } = "BYLAYER";
+    public double LinetypeScale { get; init; } = 1;
     public bool Visible { get; init; } = true;
     public string Layout { get; init; } = "Model";
     public abstract string Kind { get; }
@@ -23,6 +25,7 @@ public readonly record struct PolyVertex(Vec3 Position, double Bulge = 0);
 public sealed record PolylineEntity(ImmutableArray<PolyVertex> Vertices, bool Closed = false) : Entity
 {
     public override string Kind => "LWPOLYLINE";
+    public bool ContinuousLinetype { get; init; }
     public static PolylineEntity FromPoints(IEnumerable<Vec3> points, bool closed = false) => new(points.Select(p => new PolyVertex(p)).ToImmutableArray(), closed);
 }
 public sealed record EllipseEntity(Vec3 Center, Vec3 MajorAxis, double Ratio, double StartParameter = 0, double EndParameter = Math.PI * 2) : Entity { public override string Kind => "ELLIPSE"; }
@@ -33,13 +36,18 @@ public sealed record MeshEntity(ImmutableArray<Vec3> Vertices, ImmutableArray<in
 public sealed record BlockReferenceEntity(string Name, Vec3 Position, Vec3 Scale, double Rotation = 0) : Entity { public override string Kind => "INSERT"; }
 /// <summary>Unsupported DXF records remain opaque. They are never presented as editable geometry.</summary>
 public sealed record OpaqueEntity(string DxfType, string RawRecord) : Entity { public override string Kind => DxfType; }
-public sealed record Layer(string Name, uint Color = 0xFFD8DFE8, bool Visible = true, bool Locked = false, double LineWeight = 0.25);
+public sealed record Layer(string Name, uint Color = 0xFFD8DFE8, bool Visible = true, bool Locked = false, double LineWeight = 0.25)
+{
+    public string Linetype { get; init; } = "CONTINUOUS";
+}
 public sealed record BlockDefinition(string Name, Vec3 BasePoint, ImmutableArray<Entity> Entities);
 
 public sealed record Drawing(ImmutableArray<Entity> Entities, ImmutableDictionary<string, Layer> Layers, ImmutableDictionary<string, BlockDefinition> Blocks)
 {
     public string Name { get; init; } = "Drawing1.dxf";
     public int Units { get; init; } = 4;
+    public ImmutableDictionary<string, Linetype> Linetypes { get; init; } = Linetype.Defaults;
+    public double LinetypeScale { get; init; } = 1;
     public ImmutableDictionary<string, string> LayoutBlockNames { get; init; } = ImmutableDictionary.Create<string, string>(StringComparer.OrdinalIgnoreCase).Add("Model", "*Model_Space").Add("Layout1", "*Paper_Space");
     public static Drawing Empty => new([], ImmutableDictionary.Create<string, Layer>(StringComparer.OrdinalIgnoreCase).Add("0", new("0")), ImmutableDictionary.Create<string, BlockDefinition>(StringComparer.OrdinalIgnoreCase));
     public Layer LayerFor(Entity entity) => Layers.TryGetValue(entity.Layer, out var layer) ? layer : Layers["0"];

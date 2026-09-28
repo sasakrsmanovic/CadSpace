@@ -35,6 +35,8 @@ public sealed class CommandEngine(CadSession session)
         new("ALIGN3D", "3A", "Three source points followed by three target points; rigid alignment", "Modify"),
         new("LOFT", "LOFT", "Capped polygonal loft through selected matching profiles", "Model"),
         new("SWEEP", "SW", "Parallel-transport mesh sweep of a profile along an open polyline", "Model"),
+        new("LAYER", "LA", "Layer Properties Manager", "Manage"), new("LINETYPE", "LT", "Linetype Manager", "Manage"),
+        new("LTSCALE", "LTSCALE", "Global drawing linetype scale", "Manage"), new("CELTSCALE", "CELTSCALE", "Linetype scale for new objects", "Manage"), new("CELTYPE", "CELTYPE", "Current linetype; built-in patterns load by name", "Manage"),
         new("LINE", "L", "Connected line segments", "Draw"), new("PLINE", "PL", "Polyline; Enter finishes, C closes", "Draw"), new("RECTANG", "REC", "Rectangle from two corners", "Draw"),
         new("CIRCLE", "C", "Center and radius", "Draw"), new("ARC", "A", "Arc through three points", "Draw"), new("POINT", "PO", "Model-space point", "Draw"), new("ELLIPSE", "EL", "Center, major-axis point, minor radius", "Draw"),
         new("TEXT", "T", "Single-line text", "Annotate"), new("DIMALIGNED", "DAL", "Aligned dimension", "Annotate"), new("HATCH", "H", "Hatch selected closed polyline", "Annotate"),
@@ -82,7 +84,7 @@ public sealed class CommandEngine(CadSession session)
                     case "SELECTALL": Session.SelectAll(); Cancel(); return;
                     case "SELECTSIMILAR": Session.SelectSimilar(); Cancel(); return;
                     case "HELP": Message?.Invoke(string.Join("  ·  ", Commands.Select(c => $"{c.Name} ({c.Alias})"))); Cancel(); return;
-                    case "RENDERSTATS": case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
+                    case "RENDERSTATS": case "LAYER": case "LINETYPE": case "ZOOM": case "TOP": case "3DORBIT": ViewRequested?.Invoke(_active); Cancel(); return;
                     case "AREA":
                         var polygons = Session.EditableSelection().OfType<PolylineEntity>().Where(p => p.Closed).ToArray();
                         if (polygons.Length == 0) throw new ArgumentException("Select closed polylines for area measurement.");
@@ -134,6 +136,7 @@ public sealed class CommandEngine(CadSession session)
                 if (new Vec3(numbers[3], numbers[4], numbers[5]).Length < 1e-12) throw new ArgumentException("A clipping normal cannot be zero.");
                 ViewRequested?.Invoke("CLIP:" + input); Cancel(); return;
             }
+            if (_active == "CELTYPE") { Session.SetCurrentLinetype(input); Cancel(); return; }
             if (_active == "ARRAY") { Array(input); Cancel(); return; }
             if (GeometryMath.TryParsePoint(input, ReferencePoint ?? default, out var p)) { Point(p); return; }
             if (GeometryMath.Number(input, out var number)) { Number(number); return; }
@@ -141,7 +144,7 @@ public sealed class CommandEngine(CadSession session)
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException) { Message?.Invoke(ex.Message); Cancel(); }
     }
-    private bool RequiresNumber => _active is "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
+    private bool RequiresNumber => _active is "LTSCALE" or "CELTSCALE" or "CELTYPE" or "VSCURRENT" or "PERSPECTIVE" or "CLIP3D" or "OFFSET" or "EXTRUDE" or "FILLET" or "CHAMFER" || (_active is "ROTATE" or "SCALE" && _points.Count == 1) || (_active is "BOX" or "CYLINDER" or "CONE" or "REVOLVE" or "ELLIPSE" or "ROTATE3D" && _points.Count == 2);
     public void Point(Vec3 point)
     {
         if (!IsActive || !point.IsFinite) return;
@@ -187,6 +190,13 @@ public sealed class CommandEngine(CadSession session)
     {
         switch (_active)
         {
+            case "LTSCALE":
+                if (value <= 0 || value > 1e9) throw new ArgumentException("Global linetype scale must be positive and no larger than 1e9.");
+                Session.Document.Edit("Global linetype scale", d => d with { LinetypeScale = value }); break;
+            case "CELTSCALE":
+                if (value <= 0 || value > 1e9) throw new ArgumentException("Current linetype scale must be positive and no larger than 1e9.");
+                Session.CurrentLinetypeScale = value; Session.Invalidate(); break;
+
             case "CIRCLE" when _points.Count == 1: Session.Add("Circle", new CircleEntity(_points[0], value)); break;
             case "ELLIPSE" when _points.Count == 2:
                 var major = _points[1] - _points[0];
@@ -227,6 +237,9 @@ public sealed class CommandEngine(CadSession session)
     {
         Prompt = _active switch
         {
+            "LTSCALE" => "Specify global linetype scale",
+            "CELTSCALE" => "Specify linetype scale for new objects",
+            "CELTYPE" => "Enter BYLAYER / BYBLOCK or a loaded/built-in linetype name",
             "STRETCH" => _points.Count switch { 0 => "Specify first crossing corner", 1 => "Specify opposite crossing corner", 2 => "Specify stretch base point", _ => "Specify displacement point" },
             "QSELECT" => "Enter kind,layer[,Replace|Add|Remove[,All|Selection]]; * matches any",
             "VSCURRENT" => "Enter Wireframe / HiddenLine / Shaded / ShadedEdges",

@@ -77,6 +77,7 @@ public static class CadProjectCodec
                     var saved=savedGraph.Blocks[name]; if(block.BasePoint!=saved.BasePoint)throw new FormatException("Provenance block base point differs from DXF.");
                     for(var i=0;i<block.Entities.Length;i++)VerifySourceEntity(block.Entities[i],saved.Entities[i]);
                 }
+                if (savedGraph.LinetypeScale != original.LinetypeScale || savedGraph.Linetypes.Count != original.Linetypes.Count || savedGraph.Linetypes.Any(p => !original.Linetypes.TryGetValue(p.Key, out var t) || !Linetype.Equivalent(p.Value, t))) throw new FormatException("Provenance linetypes differ from the original DXF.");
                 CadDocument.Validate(savedGraph); original = savedGraph;
             }
             source = new(parsed.Source.Text, original, parsed.Source.Sections, parsed.Source.Records.ToImmutableDictionary(p => map[p.Key], p => p.Value)) { OriginalBytes = parsed.Source.OriginalBytes };
@@ -116,7 +117,9 @@ public static class CadProjectCodec
         if (blocks.Count == original.Blocks.Count && blocks.All(p => original.Blocks.TryGetValue(p.Key, out var b) && b == p.Value)) blocks = original.Blocks;
         var layouts = drawing.LayoutBlockNames;
         if (layouts.Count == original.LayoutBlockNames.Count && layouts.All(p => original.LayoutBlockNames.TryGetValue(p.Key, out var name) && name == p.Value)) layouts = original.LayoutBlockNames;
-        return drawing with { Entities = entities, Layers = layers, Blocks = blocks, LayoutBlockNames = layouts };
+        var types = drawing.Linetypes;
+        if (types.Count == original.Linetypes.Count && types.All(p => original.Linetypes.TryGetValue(p.Key, out var before) && Linetype.Equivalent(p.Value, before))) types = original.Linetypes;
+        return drawing with { Entities = entities, Layers = layers, Blocks = blocks, LayoutBlockNames = layouts, Linetypes = types };
     }
     private static bool Equivalent(Entity a, Entity b) => (a, b) switch
     {
@@ -136,12 +139,16 @@ public static class CadProjectCodec
     }
     private static void WriteDrawing(Utf8JsonWriter w, Drawing drawing)
     {
-        w.WriteStartObject(); w.WriteString("name", drawing.Name); w.WriteNumber("units", drawing.Units);
+        w.WriteStartObject(); w.WriteString("name", drawing.Name); w.WriteNumber("units", drawing.Units); w.WriteNumber("linetypeScale", drawing.LinetypeScale);
+        w.WritePropertyName("linetypes"); w.WriteStartArray();
+        foreach (var type in drawing.Linetypes.Values.OrderBy(l => l.Name, StringComparer.Ordinal))
+        { w.WriteStartObject(); w.WriteString("name", type.Name); w.WriteString("description", type.Description); Numbers(w, "elements", type.Elements); w.WriteBoolean("complex", type.IsComplex); w.WriteEndObject(); }
+        w.WriteEndArray();
         w.WritePropertyName("layouts"); w.WriteStartObject(); foreach (var layout in drawing.LayoutBlockNames.OrderBy(p => p.Key, StringComparer.Ordinal)) w.WriteString(layout.Key, layout.Value); w.WriteEndObject();
         w.WritePropertyName("layers"); w.WriteStartArray();
         foreach (var layer in drawing.Layers.Values.OrderBy(l => l.Name, StringComparer.Ordinal))
         {
-            w.WriteStartObject(); w.WriteString("name", layer.Name); w.WriteNumber("color", layer.Color); w.WriteBoolean("visible", layer.Visible); w.WriteBoolean("locked", layer.Locked); w.WriteNumber("weight", layer.LineWeight); w.WriteEndObject();
+            w.WriteStartObject(); w.WriteString("name", layer.Name); w.WriteNumber("color", layer.Color); w.WriteBoolean("visible", layer.Visible); w.WriteBoolean("locked", layer.Locked); w.WriteNumber("weight", layer.LineWeight); w.WriteString("linetype", layer.Linetype); w.WriteEndObject();
         }
         w.WriteEndArray(); w.WritePropertyName("blocks"); w.WriteStartArray();
         foreach (var block in drawing.Blocks.Values.OrderBy(b => b.Name, StringComparer.Ordinal))
@@ -155,11 +162,11 @@ public static class CadProjectCodec
         var layers = ImmutableDictionary.Create<string, Layer>(StringComparer.OrdinalIgnoreCase);
         foreach (var l in root.GetProperty("layers").EnumerateArray())
         {
-            var layer = new Layer(S(l, "name"), l.GetProperty("color").GetUInt32(), l.GetProperty("visible").GetBoolean(), l.GetProperty("locked").GetBoolean(), N(l, "weight")); layers = layers.Add(layer.Name, layer);
+            var layer = new Layer(S(l, "name"), l.GetProperty("color").GetUInt32(), l.GetProperty("visible").GetBoolean(), l.GetProperty("locked").GetBoolean(), N(l, "weight")) { Linetype = l.TryGetProperty("linetype", out var lt) ? lt.GetString()! : "CONTINUOUS" }; layers = layers.Add(layer.Name, layer);
         }
         var blocks = ImmutableDictionary.Create<string, BlockDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var b in root.GetProperty("blocks").EnumerateArray()) { var block = new BlockDefinition(S(b, "name"), P(b, "base"), ReadEntities(b.GetProperty("entities"))); blocks = blocks.Add(block.Name, block); }
-        return new(ReadEntities(root.GetProperty("entities")), layers, blocks) { Name = S(root, "name"), Units = root.GetProperty("units").GetInt32(), LayoutBlockNames = root.TryGetProperty("layouts", out var layouts) ? layouts.EnumerateObject().ToImmutableDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase) : Drawing.Empty.LayoutBlockNames };
+        return new(ReadEntities(root.GetProperty("entities")), layers, blocks) { Name = S(root, "name"), Units = root.GetProperty("units").GetInt32(), LinetypeScale = root.TryGetProperty("linetypeScale", out var scale) ? scale.GetDouble() : 1, Linetypes = root.TryGetProperty("linetypes", out var types) ? types.EnumerateArray().Select(t => new Linetype(S(t, "name"), S(t, "description"), Numbers(t, "elements"), t.GetProperty("complex").GetBoolean())).ToImmutableDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase) : Linetype.Defaults, LayoutBlockNames = root.TryGetProperty("layouts", out var layouts) ? layouts.EnumerateObject().ToImmutableDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase) : Drawing.Empty.LayoutBlockNames };
     }
     private static void Point(Utf8JsonWriter w, string name, Vec3 p) { w.WritePropertyName(name); Point(w, p); }
     private static void Point(Utf8JsonWriter w, Vec3 p) { w.WriteStartArray(); w.WriteNumberValue(p.X); w.WriteNumberValue(p.Y); w.WriteNumberValue(p.Z); w.WriteEndArray(); }
@@ -170,7 +177,7 @@ public static class CadProjectCodec
         foreach (var entity in entities)
         {
             w.WriteStartObject(); w.WriteString("type", entity switch { OpaqueEntity => "OPAQUE", PlacedEntity => "PLACED", CompositeEntity => "COMPOSITE", HatchRegionEntity => "HATCH_REGION", _ => entity.Kind });
-            w.WriteString("id", entity.Id); w.WriteString("handle", entity.Handle); w.WriteString("layer", entity.Layer); w.WriteNumber("aci", entity.ColorIndex); w.WriteNumber("weight", entity.LineWeight); w.WriteBoolean("visible", entity.Visible); w.WriteString("layout", entity.Layout);
+            w.WriteString("id", entity.Id); w.WriteString("handle", entity.Handle); w.WriteString("layer", entity.Layer); w.WriteNumber("aci", entity.ColorIndex); w.WriteNumber("weight", entity.LineWeight); w.WriteString("linetype", entity.Linetype); w.WriteNumber("linetypeScale", entity.LinetypeScale); w.WriteBoolean("visible", entity.Visible); w.WriteString("layout", entity.Layout);
             if (entity.TrueColor is uint color) w.WriteNumber("color", color);
             switch (entity)
             {
@@ -179,7 +186,7 @@ public static class CadProjectCodec
                 case CircleEntity e: Point(w, "center", e.Center); w.WriteNumber("radius", e.Radius); break;
                 case ArcEntity e: Point(w, "center", e.Center); w.WriteNumber("radius", e.Radius); w.WriteNumber("start", e.StartAngle); w.WriteNumber("end", e.EndAngle); break;
                 case PolylineEntity e:
-                    w.WriteBoolean("closed", e.Closed); w.WritePropertyName("vertices"); w.WriteStartArray();
+                    w.WriteBoolean("closed", e.Closed); w.WriteBoolean("continuousLinetype", e.ContinuousLinetype); w.WritePropertyName("vertices"); w.WriteStartArray();
                     foreach (var v in e.Vertices) { w.WriteStartObject(); Point(w, "point", v.Position); w.WriteNumber("bulge", v.Bulge); w.WriteEndObject(); } w.WriteEndArray(); break;
                 case EllipseEntity e: Point(w, "center", e.Center); Point(w, "major", e.MajorAxis); w.WriteNumber("ratio", e.Ratio); w.WriteNumber("start", e.StartParameter); w.WriteNumber("end", e.EndParameter); break;
                 case TextEntity e: Point(w, "point", e.Position); w.WriteString("text", e.Text); w.WriteNumber("height", e.Height); w.WriteNumber("rotation", e.Rotation); break;
@@ -187,7 +194,7 @@ public static class CadProjectCodec
                 case HatchEntity e: Points(w, "boundary", e.Boundary); w.WriteNumber("spacing", e.Spacing); w.WriteNumber("angle", e.Angle); w.WriteBoolean("solid", e.Solid); break;
                 case MeshEntity e: Points(w, "vertices", e.Vertices); w.WritePropertyName("triangles"); w.WriteStartArray(); foreach (var index in e.Triangles) w.WriteNumberValue(index); w.WriteEndArray(); w.WriteString("operation", e.Operation); break;
                 case BlockReferenceEntity e: w.WriteString("name", e.Name); Point(w, "point", e.Position); Point(w, "scale", e.Scale); w.WriteNumber("rotation", e.Rotation); break;
-                case Polyline3DEntity e: Points(w, "points", e.Points); w.WriteBoolean("closed", e.Closed); break;
+                case Polyline3DEntity e: Points(w, "points", e.Points); w.WriteBoolean("closed", e.Closed); w.WriteBoolean("continuousLinetype", e.ContinuousLinetype); break;
                 case SplineEntity e:
                     w.WriteNumber("degree", e.Degree); Points(w, "controls", e.ControlPoints); Numbers(w, "knots", e.Knots); Numbers(w, "weights", e.Weights); w.WriteBoolean("closed", e.Closed); w.WriteBoolean("periodic", e.Periodic); break;
                 case PlacedEntity e:
@@ -218,14 +225,14 @@ public static class CadProjectCodec
                 "POINT" => new PointEntity(P(e, "point")),
                 "CIRCLE" => new CircleEntity(P(e, "center"), N(e, "radius")),
                 "ARC" => new ArcEntity(P(e, "center"), N(e, "radius"), N(e, "start"), N(e, "end")),
-                "LWPOLYLINE" => new PolylineEntity(e.GetProperty("vertices").EnumerateArray().Select(v => new PolyVertex(P(v, "point"), N(v, "bulge"))).ToImmutableArray(), e.GetProperty("closed").GetBoolean()),
+                "LWPOLYLINE" => new PolylineEntity(e.GetProperty("vertices").EnumerateArray().Select(v => new PolyVertex(P(v, "point"), N(v, "bulge"))).ToImmutableArray(), e.GetProperty("closed").GetBoolean()) { ContinuousLinetype = e.TryGetProperty("continuousLinetype", out var generated) && generated.GetBoolean() },
                 "ELLIPSE" => new EllipseEntity(P(e, "center"), P(e, "major"), N(e, "ratio"), N(e, "start"), N(e, "end")),
                 "TEXT" or "MTEXT" => new TextEntity(P(e, "point"), S(e, "text"), N(e, "height"), N(e, "rotation"), type == "MTEXT"),
                 "DIMENSION" => new DimensionEntity(P(e, "a"), P(e, "b"), P(e, "location")),
                 "HATCH" => new HatchEntity(Points(e.GetProperty("boundary")), N(e, "spacing"), N(e, "angle"), e.GetProperty("solid").GetBoolean()),
                 "MESH" => new MeshEntity(Points(e.GetProperty("vertices")), e.GetProperty("triangles").EnumerateArray().Select(i => i.GetInt32()).ToImmutableArray(), S(e, "operation")),
                 "INSERT" => new BlockReferenceEntity(S(e, "name"), P(e, "point"), P(e, "scale"), N(e, "rotation")),
-                "POLYLINE" => new Polyline3DEntity(Points(e.GetProperty("points")), e.GetProperty("closed").GetBoolean()),
+                "POLYLINE" => new Polyline3DEntity(Points(e.GetProperty("points")), e.GetProperty("closed").GetBoolean()) { ContinuousLinetype = e.TryGetProperty("continuousLinetype", out var generated3d) && generated3d.GetBoolean() },
                 "SPLINE" => new SplineEntity(e.GetProperty("degree").GetInt32(), Points(e.GetProperty("controls")), Numbers(e, "knots"), Numbers(e, "weights"), e.GetProperty("closed").GetBoolean(), e.GetProperty("periodic").GetBoolean()),
                 "PLACED" => new PlacedEntity(ReadEntities(e.GetProperty("geometry")).Single(), Matrix(e.GetProperty("matrix"))),
                 "COMPOSITE" => new CompositeEntity(S(e, "dxfType"), ReadEntities(e.GetProperty("children")), S(e, "source")),
@@ -233,7 +240,7 @@ public static class CadProjectCodec
                 "OPAQUE" => new OpaqueEntity(S(e, "dxfType"), S(e, "raw")),
                 _ => throw new FormatException($"Unknown native entity type: {type}")
             };
-            return entity with { Id = e.GetProperty("id").GetGuid(), Handle = S(e, "handle"), Layer = S(e, "layer"), ColorIndex = e.GetProperty("aci").GetInt32(), LineWeight = N(e, "weight"), Visible = !e.TryGetProperty("visible", out var visible) || visible.GetBoolean(), Layout = e.TryGetProperty("layout", out var layout) ? layout.GetString() ?? "Model" : "Model", TrueColor = e.TryGetProperty("color", out var c) ? c.GetUInt32() : null };
+            return entity with { Id = e.GetProperty("id").GetGuid(), Handle = S(e, "handle"), Layer = S(e, "layer"), ColorIndex = e.GetProperty("aci").GetInt32(), LineWeight = N(e, "weight"), Linetype = e.TryGetProperty("linetype", out var lt) ? lt.GetString()! : "BYLAYER", LinetypeScale = e.TryGetProperty("linetypeScale", out var ls) ? ls.GetDouble() : 1, Visible = !e.TryGetProperty("visible", out var visible) || visible.GetBoolean(), Layout = e.TryGetProperty("layout", out var layout) ? layout.GetString() ?? "Model" : "Model", TrueColor = e.TryGetProperty("color", out var c) ? c.GetUInt32() : null };
         }).ToImmutableArray();
     }
     private static Transform3 Matrix(JsonElement e)

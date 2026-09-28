@@ -36,6 +36,17 @@ public sealed class SkiaDraftRenderer : IDisposable
             {
                 var point = Pixel(camera, path.Points[0]); canvas.DrawLine(point.X - 3, point.Y, point.X + 3, point.Y, _stroke); canvas.DrawLine(point.X, point.Y - 3, point.X, point.Y + 3, _stroke); continue;
             }
+            if (!path.Filled && path.Pattern is { } pattern && pattern.Length * camera.PixelsPerUnit >= 2)
+            {
+                _fill.Color = color;
+                foreach (var dash in pattern.VisibleStrokes(path, bounds))
+                {
+                    var a = Pixel(camera, dash.Start); var b = Pixel(camera, dash.End);
+                    if (dash.Dot) canvas.DrawCircle(a.X, a.Y, Math.Max(.75f, _stroke.StrokeWidth / 2), _fill);
+                    else canvas.DrawLine(a, b, _stroke);
+                }
+                continue;
+            }
             using var outline = new SKPath(); outline.MoveTo(Pixel(camera, path.Points[0]));
             for (var i = 1; i < path.Points.Length; i++) outline.LineTo(Pixel(camera, path.Points[i]));
             if (path.Closed) outline.Close();
