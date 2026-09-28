@@ -27,3 +27,8 @@ Independent ezdxf-generated fixtures include constant/tapered widths, bulges, cl
 Autodesk LWPOLYLINE group-code reference: https://help.autodesk.com/cloudhelp/2015/ENU/AutoCAD-DXF/files/GUID-748FC305-F3F2-4F74-825A-61F04D757A50.htm
 
 Autodesk PEDIT 2D polyline options: https://help.autodesk.com/cloudhelp/2026/ENU/AutoCAD-MAC-Core/files/GUID-648BDC21-E835-478F-A318-9D201479998D.htm
+
+
+## Projects from earlier interpreters
+
+A native project created when a width record was unsupported can retain it as opaque data. Such roots (including block children) remain readable after an interpreter upgrade only when all stored group values, the DXF type and common properties exactly match the original source record. Altered data or properties still fail provenance validation. The old native representation is intentionally preserved, rather than silently replacing it with a newly interpreted object. Export the preserved DXF and reopen that copy to use the newer geometry interpreter. This compatibility path does not relax source validation or guarantee every historical format migration.

@@ -155,7 +155,7 @@ dotnet run --project tests/CadSpace.Advanced.Tests -c Release
 dotnet run --project tests/CadSpace.Performance.Tests -c Release
 ```
 
-The five suites contain **300 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
+The five suites contain **306 headless regressions**. CI generates independent fixtures and requires **zero errors and zero repairs** for tested ASCII/binary geometry and style exports. It builds Windows/macOS/Linux, publishes the trimmed browser app, packs all six libraries and tests rendered pixels, grip/selection workflows, recovery after reload, patterns and layer-manager edits. Artifact screenshots and native checkpoints make visual and persistence failures inspectable.
 
 Current-main builds deploy to GitHub Pages and verify the served commit. Tagged releases run headless checks/audits and package desktop/browser/source distributions with checksums. NuGet.org publication, signing and notarization are not automatic.
 

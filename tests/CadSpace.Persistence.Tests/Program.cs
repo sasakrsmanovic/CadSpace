@@ -14,6 +14,7 @@ Test("DXF original byte pass-through after native save", () => { var raw = "0\r\
 Test("untouched DXF metadata survives native edited save", () => { var raw = "0\nSECTION\n2\nENTITIES\n0\nLINE\n5\nAB\n10\n0\n20\n0\n11\n10\n21\n10\n1001\nMYDATA\n1000\nKEEP THIS\n0\nENDSEC\n0\nEOF\n"; var dxf = DxfCodec.Read(raw); var edited = dxf.Drawing with { Entities = dxf.Drawing.Entities.Add(new CircleEntity(default, 20)) }; var project = CadProjectCodec.Read(CadProjectCodec.Write(edited, dxf.Source)); Check(DxfCodec.Write(project.Drawing, project.DxfSource).Text.Contains("1000\nKEEP THIS")); });
 Test("blocks preserve DXF provenance across native save", () => { var raw = DxfCodec.Write(SampleDrawings.StudioPlan()).Text; var dxf = DxfCodec.Read(raw); var project = CadProjectCodec.Read(CadProjectCodec.Write(dxf.Drawing, dxf.Source)); Check(DxfCodec.Write(project.Drawing, project.DxfSource).Text == raw); });
 Test("future native version rejected", () => { var text = CadProjectCodec.Write(Drawing.Empty).Replace("\"version\": 2", "\"version\": 999"); var rejected = false; try { CadProjectCodec.Read(text); } catch (FormatException) { rejected = true; } Check(rejected); });
+SourceCompatibilityRegression.Register(Test);
 var failed = 0;
 foreach (var (name, run) in tests) try { run(); Console.WriteLine($"PASS {name}"); } catch (Exception error) { failed++; Console.Error.WriteLine($"FAIL {name}: {error}"); }
 Console.WriteLine($"{tests.Count - failed}/{tests.Count} persistence tests passed.");
