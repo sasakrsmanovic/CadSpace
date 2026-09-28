@@ -59,12 +59,35 @@ async def main():
             await command('LTSCALE','2');assert '*' in await page.title()
             # Perform actual manager edits and check the application's real saved native checkpoint.
             # No test-only model API: persistence is the same IndexedDB adapter used by recovery.
-            async def fill(x, y, text):
-                await page.mouse.click(x,y);await page.keyboard.press('Control+a');await page.keyboard.type(text)
+            async def fill(x, y, text, expected=None):
+                # Uno renders controls on a canvas and retargets its native keyboard input
+                # asynchronously. Wait for that input to occupy the clicked field before
+                # typing; otherwise the dialog's initial Search focus can receive the text.
+                focus = None
+                for _ in range(10):
+                    await page.mouse.click(x, y)
+                    await page.wait_for_timeout(150)
+                    focus = await page.evaluate("""() => {
+                        const input = document.activeElement;
+                        if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return null;
+                        const r = input.getBoundingClientRect();
+                        return {x:r.x,y:r.y,width:r.width,height:r.height,value:input.value};
+                    }""")
+                    if (focus and focus['x'] - 8 <= x <= focus['x'] + focus['width'] + 8 and
+                            focus['y'] - 8 <= y <= focus['y'] + focus['height'] + 8):
+                        break
+                else:
+                    raise AssertionError(f'Native input did not focus the field at {(x,y)}: {focus}')
+                if expected is not None:
+                    assert focus['value'] == expected, (expected, focus)
+                await page.keyboard.press('Control+a')
+                await page.keyboard.type(text, delay=15)
+                await page.wait_for_timeout(150)
+                assert await page.evaluate('() => document.activeElement.value') == text
             await command('LAYER')
             await fill(500,606,'QA_TEMP');await page.mouse.click(675,606);await page.wait_for_timeout(300)
             await page.mouse.click(490,376);await page.wait_for_timeout(200)
-            await fill(490,673,'QA_LAYER');await fill(650,673,'12ABEF');await fill(889,673,'0.50')
+            await fill(490,673,'QA_LAYER',expected='QA_TEMP');await fill(650,673,'12ABEF');await fill(889,673,'0.50')
             await page.mouse.click(1128,673);await page.wait_for_timeout(350)
             await page.mouse.click(490,376);await page.mouse.click(778,606);await page.wait_for_timeout(200)
             await capture('36-layer-manager-edited.png')
